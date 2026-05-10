@@ -38,12 +38,12 @@ set "DB_PATH=%SCRIPT_DIR%config\app_data.db"
 if not exist "%TEMP_DIR%" mkdir "%TEMP_DIR%"
 
 :: ============================================================
-:: STEP 0 - RESET STALE SETTINGS (fixes "Checking..." bug)
+:: STEP 0 - CHECK & FIX STALE SETTINGS (only if wrong model)
 :: ============================================================
-echo [0/7] Resetting AI configuration to enforce 0.5b model...
+echo [0/7] Checking AI configuration...
 echo.
 
-:: Directly patch the SQLite DB to clear stale model settings
+:: Only patch DB if the wrong model is saved - not every time
 python --version >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     python -c "
@@ -51,17 +51,23 @@ import sqlite3, os
 db = r'%DB_PATH%'
 if os.path.exists(db):
     conn = sqlite3.connect(db)
-    conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('ai_provider','ollama')\")
-    conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('ollama_model','qwen2.5:0.5b')\")
-    conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('first_run','false')\")
-    conn.commit()
+    row = conn.execute(\"SELECT value FROM settings WHERE key='ollama_model'\").fetchone()
+    model = row[0] if row else ''
+    if model and 'qwen2.5:0.5' not in model:
+        conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('ai_provider','ollama')\")
+        conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('ollama_model','qwen2.5:0.5b')\")
+        conn.commit()
+        print('  [FIX] Stale model corrected: was [' + model + '] -> qwen2.5:0.5b')
+    elif not model:
+        print('  [INFO] No model saved yet - will be set on first run.')
+    else:
+        print('  [OK] Model already correct: ' + model)
     conn.close()
-    print('  [OK] DB settings reset to 0.5b.')
 else:
     print('  [INFO] DB not found - will be created on first run.')
 " 2>nul
 ) else (
-    echo  [INFO] Python not found yet - DB will be configured after install.
+    echo  [INFO] Python not found yet - will be configured after install.
 )
 
 echo.

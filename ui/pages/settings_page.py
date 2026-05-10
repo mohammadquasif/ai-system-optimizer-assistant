@@ -79,19 +79,24 @@ class SettingsPage(QWidget):
 
         self._ollama_status_lbl = QLabel("")
         self._ollama_status_lbl.setStyleSheet("color: #8BA3C7; font-size: 11px; font-family: 'Segoe UI';")
+        self._ollama_status_lbl.setWordWrap(True)
 
-        test_ollama_btn = NeonButton("🔌 Test Ollama Connection", "#00D4FF")
+        test_ollama_btn = NeonButton("🔌 Test Connection", "#00D4FF")
         test_ollama_btn.clicked.connect(self._test_ollama)
-        
-        reset_ai_btn = NeonButton("🔄 Reset AI Setup (Fix Issues)", "#FFB800")
+
+        fix_ollama_btn = NeonButton("🔧 Fix Ollama (Auto Repair)", "#FFB800")
+        fix_ollama_btn.clicked.connect(self._fix_ollama)
+
+        reset_ai_btn = NeonButton("🔄 Reset AI Setup", "#7C3AED")
         reset_ai_btn.clicked.connect(self._reset_ai_setup)
 
         of.addWidget(self._lbl("Ollama URL:"))
         of.addWidget(self._ollama_url)
-        of.addWidget(self._lbl("Model:"))
+        of.addWidget(self._lbl("Model (locked to qwen2.5:0.5b):"))
         of.addWidget(self._ollama_model)
         of.addWidget(self._ollama_status_lbl)
         of.addWidget(test_ollama_btn)
+        of.addWidget(fix_ollama_btn)
         of.addWidget(reset_ai_btn)
         cl.addWidget(self._ollama_frame)
 
@@ -276,6 +281,22 @@ class SettingsPage(QWidget):
         cl.addWidget(self._tray_cb)
         cl.addWidget(save_sys_btn)
         layout.addWidget(card)
+
+        # Desktop shortcut card
+        sc_card = GlassCard(accent_color="#00D4FF")
+        scl = QVBoxLayout(sc_card)
+        scl.setContentsMargins(20, 16, 20, 16)
+        scl.setSpacing(10)
+        scl.addWidget(self._lbl("🖥️ Desktop & Shortcuts", color="#00D4FF", size=14, bold=True))
+        self._sc_status = QLabel("")
+        self._sc_status.setStyleSheet("color: #8BA3C7; font-size: 11px; font-family: 'Segoe UI';")
+        self._sc_status.setWordWrap(True)
+        create_sc_btn = NeonButton("🔗 Create Desktop Shortcut", "#00D4FF")
+        create_sc_btn.clicked.connect(self._create_shortcut)
+        scl.addWidget(self._sc_status)
+        scl.addWidget(create_sc_btn)
+        layout.addWidget(sc_card)
+
         layout.addStretch()
         return w
 
@@ -287,23 +308,157 @@ class SettingsPage(QWidget):
         self._show_info("✅ System settings saved!")
 
     def _configure_startup(self, enable: bool):
+        """Add/remove app from Windows startup registry using correct app.py path."""
         try:
-            import winreg, sys
+            import winreg, sys, os
+            app_py = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "app.py")
+            )
+            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            if not os.path.exists(pythonw):
+                pythonw = sys.executable
+            cmd = f'"{pythonw}" "{app_py}"'
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
                 r"Software\Microsoft\Windows\CurrentVersion\Run",
                 0, winreg.KEY_SET_VALUE
             )
             if enable:
-                winreg.SetValueEx(key, "AI System Optimizer", 0, winreg.REG_SZ, f'"{sys.executable}" "{__file__}"')
+                winreg.SetValueEx(key, "AISystemOptimizer", 0, winreg.REG_SZ, cmd)
             else:
                 try:
-                    winreg.DeleteValue(key, "AI System Optimizer")
+                    winreg.DeleteValue(key, "AISystemOptimizer")
                 except FileNotFoundError:
                     pass
             winreg.CloseKey(key)
         except Exception as e:
             pass
+
+    def _fix_ollama(self):
+        """Auto-repair: start service, pull qwen2.5:0.5b, configure settings."""
+        self._ollama_status_lbl.setText("⏳ Diagnosing Ollama... please wait.")
+        self._ollama_status_lbl.setStyleSheet("color: #FFB800; font-size: 11px; font-family: 'Segoe UI';")
+
+        def _run():
+            from ai.ollama_manager import OllamaManager, TARGET_MODEL
+            from config.settings import set_setting
+            import time, requests
+
+            steps = []
+
+            # Step 1: Check installed
+            if not OllamaManager.is_installed():
+                QTimer.singleShot(0, lambda: self._ollama_status_lbl.setText(
+                    "❌ Ollama not installed!\nPlease run INSTALL.bat or download from https://ollama.com"))
+                return
+            steps.append("✅ Ollama installed")
+
+            # Step 2: Start service if not running
+            if not OllamaManager.is_api_running():
+                QTimer.singleShot(0, lambda: self._ollama_status_lbl.setText(
+                    "⏳ Starting Ollama service..."))
+                OllamaManager._start_service()
+                for _ in range(12):
+                    time.sleep(1.5)
+                    if OllamaManager.is_api_running():
+                        break
+            if OllamaManager.is_api_running():
+                steps.append("✅ Service running")
+            else:
+                QTimer.singleShot(0, lambda: self._ollama_status_lbl.setText(
+                    "❌ Could not start Ollama service.\nTry restarting your PC."))
+                return
+
+            # Step 3: Check if 0.5b installed
+            installed = OllamaManager.list_installed_models()
+            has_05b = any(m.startswith("qwen2.5:0.5") or m == TARGET_MODEL for m in installed)
+
+            if not has_05b:
+                QTimer.singleShot(0, lambda: self._ollama_status_lbl.setText(
+                    f"⏳ Pulling {TARGET_MODEL} (~400 MB)... this may take a few minutes."))
+                try:
+                    with requests.post(
+                        "http://localhost:11434/api/pull",
+                        json={"name": TARGET_MODEL}, stream=True, timeout=900
+                    ) as resp:
+                        for line in resp.iter_lines():
+                            if line:
+                                import json as _json
+                                d = _json.loads(line)
+                                pct = ""
+                                if d.get("total", 0) > 0:
+                                    pct = f" {int(d.get('completed',0)/d['total']*100)}%"
+                                msg = f"⏳ Pulling {TARGET_MODEL}{pct}..."
+                                QTimer.singleShot(0, lambda m=msg: self._ollama_status_lbl.setText(m))
+                                if d.get("status") == "success":
+                                    break
+                    steps.append(f"✅ Model {TARGET_MODEL} ready")
+                except Exception as e:
+                    QTimer.singleShot(0, lambda: self._ollama_status_lbl.setText(
+                        f"❌ Pull failed: {e}\nCheck internet connection."))
+                    return
+            else:
+                steps.append(f"✅ Model {TARGET_MODEL} already installed")
+
+            # Step 4: Write correct settings
+            set_setting("ai_provider", "ollama")
+            set_setting("ollama_model", TARGET_MODEL)
+            from ai.ai_service import AIService
+            AIService.get_instance().reload()
+            steps.append("✅ AI configured and active")
+
+            summary = "\n".join(steps)
+            QTimer.singleShot(0, lambda s=summary: (
+                self._ollama_status_lbl.setText(f"🎉 Repair complete!\n{s}"),
+                self._ollama_status_lbl.setStyleSheet(
+                    "color: #00FF88; font-size: 11px; font-family: 'Segoe UI';"
+                )
+            ))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _create_shortcut(self):
+        """Create desktop shortcut and optionally pin to startup."""
+        import os, sys
+        try:
+            import winshell
+            from win32com.client import Dispatch
+            app_py = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "app.py")
+            )
+            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            if not os.path.exists(pythonw):
+                pythonw = sys.executable
+            icon_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "assets", "icon.ico")
+            )
+            if not os.path.exists(icon_path):
+                icon_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "..", "assets", "icon.png")
+                )
+
+            desktop = winshell.desktop()
+            shortcut_path = os.path.join(desktop, "AI System Optimizer.lnk")
+            shell = Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortCut(shortcut_path)
+            shortcut.Targetpath = pythonw
+            shortcut.Arguments = f'"{app_py}"'
+            shortcut.WorkingDirectory = os.path.dirname(app_py)
+            shortcut.Description = "AI System Optimizer Assistant by Mohammad Quasif"
+            if os.path.exists(icon_path):
+                shortcut.IconLocation = icon_path
+            shortcut.save()
+
+            self._sc_status.setText(f"✅ Shortcut created on Desktop:\n{shortcut_path}")
+            self._sc_status.setStyleSheet("color: #00FF88; font-size: 11px; font-family: 'Segoe UI';")
+        except ImportError:
+            self._sc_status.setText(
+                "⚠️ winshell not installed.\nRun: pip install winshell pywin32"
+            )
+            self._sc_status.setStyleSheet("color: #FFB800; font-size: 11px; font-family: 'Segoe UI';")
+        except Exception as e:
+            self._sc_status.setText(f"❌ Failed: {e}")
+            self._sc_status.setStyleSheet("color: #FF2D55; font-size: 11px; font-family: 'Segoe UI';")
 
     # ── GENERAL TAB ───────────────────────────────────────────────
 
@@ -348,20 +503,85 @@ class SettingsPage(QWidget):
         from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Uninstall AI System Optimizer",
-            "Are you sure you want to uninstall this app?\n\n"
+            "Are you sure you want to uninstall?\n\n"
             "This will:\n"
             "  ✓ Remove from Windows startup\n"
+            "  ✓ Delete desktop shortcut\n"
             "  ✓ Clear all saved settings\n"
-            "  ✓ Show you how to delete the app folder\n\n"
-            "Continue?",
+            "  ✓ Open folder so you can delete it\n\n"
+            "Note: Ollama and the AI model are NOT removed.\n\nContinue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        import sys, os
-        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        import sys, os, subprocess
+        app_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        results = []
+
+        # 1. Remove from startup registry (all known key names)
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0, winreg.KEY_SET_VALUE
+            )
+            removed = False
+            for reg_name in ["AISystemOptimizer", "AI System Optimizer", "AIOptimizer"]:
+                try:
+                    winreg.DeleteValue(key, reg_name)
+                    removed = True
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(key)
+            results.append("✅ Removed from startup" if removed else "ℹ️ Not in startup")
+        except Exception as e:
+            results.append(f"⚠️ Startup: {e}")
+
+        # 2. Delete desktop shortcut
+        try:
+            desktop = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
+            sc = os.path.join(desktop, "AI System Optimizer.lnk")
+            if os.path.exists(sc):
+                os.remove(sc)
+                results.append("✅ Desktop shortcut removed")
+            else:
+                results.append("ℹ️ No desktop shortcut found")
+        except Exception as e:
+            results.append(f"⚠️ Shortcut: {e}")
+
+        # 3. Clear settings database
+        try:
+            from config.settings import DB_PATH
+            db_p = str(DB_PATH)
+            if os.path.exists(db_p):
+                import sqlite3
+                conn = sqlite3.connect(db_p)
+                conn.execute("DELETE FROM settings")
+                conn.commit()
+                conn.close()
+                results.append("✅ Settings cleared")
+        except Exception as e:
+            results.append(f"⚠️ DB: {e}")
+
+        results_text = "\n".join(results)
+        QMessageBox.information(
+            self, "✅ Uninstall Complete",
+            f"Done:\n{results_text}\n\n"
+            f"📁 Delete this folder to finish:\n{app_dir}\n\n"
+            "File Explorer will open — just delete the folder.\n"
+            "App will now close.",
+        )
+        try:
+            subprocess.Popen(f'explorer "{app_dir}"')
+        except Exception:
+            pass
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
+
+
         results = []
 
         # 1. Remove from Windows startup registry
