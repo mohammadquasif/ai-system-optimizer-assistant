@@ -33,27 +33,31 @@ logger = logging.getLogger(__name__)
 
 def _get_system_username() -> str:
     """
-    Extract a clean, speakable first name from the Windows login name.
-    'quasi_7p4hqhx' → 'Quasi'  |  'john.doe' → 'John'  |  'JohnSmith' → 'Johnsmith'
-    Ignores machine-ID suffixes (numbers/underscores after the real name).
+    Priority:
+    1. Database setting (user_name)
+    2. Clean Windows login name
+    3. Default 'User'
     """
+    # 1. Try Database
+    db_name = get_setting("user_name", "")
+    if db_name:
+        return db_name
+
+    # 2. Try System
     try:
         import getpass, re
         raw = getpass.getuser()
-        # Split on any non-alpha character
         parts = re.split(r'[^a-zA-Z]+', raw)
-        # Pick the longest alphabetic segment that is at least 3 chars
         alpha_parts = [p for p in parts if len(p) >= 3]
         if alpha_parts:
-            # Prefer the first meaningful segment
-            name = max(alpha_parts[:2], key=len)  # first 2 parts, pick longer
+            name = max(alpha_parts[:2], key=len)
         elif parts:
             name = parts[0]
         else:
             name = raw
         return name.capitalize()
     except Exception:
-        return get_setting("user_name", "User")
+        return "User"
 
 
 # ────────────────────────────────────────────────────────────────
@@ -280,6 +284,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._topbar_health)
         layout.addLayout(ai_row)
         layout.addLayout(ollama_row)
+
+        mic_row = QHBoxLayout()
+        mic_row.setSpacing(6)
+        self._mic_dot = StatusBadge("offline")
+        self._mic_lbl = QLabel("Mic: Off")
+        self._mic_lbl.setStyleSheet("color: #4A6080; font-size: 12px; font-family: 'Segoe UI';")
+        mic_row.addWidget(self._mic_dot)
+        mic_row.addWidget(self._mic_lbl)
+        layout.addLayout(mic_row)
+
         layout.addWidget(self._model_lbl)
         layout.addStretch()
 
@@ -369,10 +383,10 @@ class MainWindow(QMainWindow):
         # Voice recognition callback — route through AI Chat page
         if get_setting("voice_enabled", "true") == "true":
             self._voice.start()
-            self._voice.start_listening(
-                lambda text: QTimer.singleShot(0, lambda t=text: self._pages["ai_chat"].send_message_external(t))
-            )
+            # We don't start listening by default now, only on toggle or idle trigger
+            # self._voice.start_listening(self._on_voice_command) 
             QTimer.singleShot(2000, lambda: self._voice.greet(self._user_name))
+            self._update_mic_status(False)
 
         # Setup voice command handler with full navigation + action wiring
         def _navigate_and(page: str, action_fn=None):
@@ -523,11 +537,25 @@ class MainWindow(QMainWindow):
             """)
             self._voice.speak(f"I'm listening, {self._user_name}. What can I do for you?")
             self._voice.start_listening(self._on_voice_command)
+            self._update_mic_status(True)
+
+    def _update_mic_status(self, listening: bool):
+        if listening:
+            self._mic_dot.set_status("online")
+            self._mic_lbl.setText("Mic: Listening...")
+            self._mic_lbl.setStyleSheet("color: #00D4FF; font-size: 12px; font-family: 'Segoe UI';")
+        else:
+            self._mic_dot.set_status("offline")
+            self._mic_lbl.setText("Mic: Off")
+            self._mic_lbl.setStyleSheet("color: #4A6080; font-size: 12px; font-family: 'Segoe UI';")
 
     def _on_voice_command(self, text: str):
-        """Handle recognized voice command — route to AI or built-in action."""
+        """Handle recognized voice command — route to AI Assistant chat."""
         logger.info(f"[Voice] Command: {text}")
-        self._voice_handler.handle(text)
+        # Send to AI Chat page (which handles local commands + AI bubbles)
+        QTimer.singleShot(0, lambda t=text: self._pages["ai_chat"].send_message_external(t))
+        # Visual feedback: stop listening after one command is caught to avoid confusion
+        QTimer.singleShot(500, self._toggle_voice)
 
     # ────────────────────────────────────────────────────────
     # MISC

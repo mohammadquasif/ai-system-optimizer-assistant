@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import (
     QLineEdit, QScrollArea, QFrame, QPushButton, QComboBox,
     QSizePolicy, QSpacerItem,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot
-from PyQt6.QtGui import QFont, QColor, QTextCursor
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot, QSize
+from PyQt6.QtGui import QFont, QColor, QTextCursor, QIcon
 
 from ui.widgets import GlassCard, NeonButton, AIThinkingWidget, StatusBadge
 from ai.ai_service import AIService
@@ -91,11 +91,56 @@ class ChatBubble(QFrame):
         )
         self.setMaximumWidth(680)
 
+        # Buttons layout
+        self._btn_container = QWidget()
+        self._btn_layout = QHBoxLayout(self._btn_container)
+        self._btn_layout.setContentsMargins(0, 4, 0, 4)
+        self._btn_layout.setSpacing(8)
+        self._btn_layout.addStretch()
+        layout.addWidget(self._btn_container)
+        self._btn_container.hide()
+
     def append_text(self, token: str):
         self._text_lbl.setText(self._text_lbl.text() + token)
+        self._parse_buttons()
 
     def set_text(self, text: str):
         self._text_lbl.setText(text)
+        self._parse_buttons()
+
+    def _parse_buttons(self):
+        """Look for [BUTTON: Label | Command] in text and create real buttons."""
+        import re
+        text = self._text_lbl.text()
+        matches = re.findall(r"\[BUTTON:\s*(.*?)\s*\|\s*(.*?)\s*\]", text)
+        if not matches:
+            return
+
+        # Clean text from tags
+        clean_text = re.sub(r"\[BUTTON:.*?\]", "", text).strip()
+        self._text_lbl.setText(clean_text)
+
+        # Clear existing buttons
+        while self._btn_layout.count() > 1:
+            item = self._btn_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for label, cmd in matches:
+            btn = QPushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #7C3AED20; color: #7C3AED;
+                    border: 1px solid #7C3AED60; border-radius: 6px;
+                    padding: 6px 12px; font-size: 11px; font-weight: 600;
+                    font-family: 'Segoe UI';
+                }
+                QPushButton:hover { background: #7C3AED40; border-color: #7C3AED; }
+            """)
+            btn.clicked.connect(lambda _, c=cmd: self.parent().parent().parent().parent()._handle_action_btn(c))
+            self._btn_layout.insertWidget(self._btn_layout.count()-1, btn)
+            self._btn_container.show()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -194,12 +239,12 @@ class AIChatPage(QWidget):
         chips_row = QHBoxLayout()
         chips_row.setSpacing(8)
         chip_defs = [
-            ("🔍 System Status",   "how is my system doing?"),
-            ("🧹 Clean System",    "clean my system"),
-            ("🌐 Browser Cleanup", "browser cleanup"),
-            ("⚡ Performance Tips","give me performance tips"),
-            ("🚀 Startup Apps",    "analyze my startup apps"),
-            ("💾 RAM Usage",       "how much RAM am I using?"),
+            ("🔍 System Status",    "Analyze my system health and top processes"),
+            ("🧹 Clean System",     "Perform a full system cleanup"),
+            ("🌐 Browser Cleanup",  "Optimize my browser and clear cache"),
+            ("⚡ Performance Tips", "Pro tips to speed up my PC"),
+            ("🚀 Startup Apps",     "Identify heavy apps in my startup"),
+            ("💾 RAM Usage",        "Which processes are using the most RAM?"),
         ]
         for label, prompt in chip_defs:
             btn = QPushButton(label)
@@ -375,10 +420,25 @@ class AIChatPage(QWidget):
         m = psutil.virtual_memory()
         cpu = psutil.cpu_percent(interval=None)
         disk = psutil.disk_usage('C:\\')
+        
+        # Get top 5 memory processes
+        procs = []
+        try:
+            for p in psutil.process_iter(['name', 'memory_percent']):
+                procs.append(p.info)
+            procs = sorted(procs, key=lambda x: x['memory_percent'], reverse=True)[:5]
+        except Exception:
+            pass
+        
+        proc_list = ", ".join([f"{p['name']} ({p['memory_percent']:.1f}%)" for p in procs])
+
         context = (
             f"SYSTEM STATE: CPU={cpu}%, RAM={m.percent}% ({m.available//1024//1024}MB free), "
             f"DISK={disk.percent}% ({disk.free//1024//1024//1024}GB free). "
-            "Please provide a structured report with optimization tips if needed."
+            f"TOP PROCESSES: {proc_list}. "
+            "INSTRUCTIONS: Be productive. If system health is low, recommend specific actions. "
+            "Use the format [BUTTON: Label | Action] to suggest tools. "
+            "Actions: cleanup, browser, dashboard, performance, status, minimize."
         )
         self._worker = AIWorker(text, self._chat_history[:-1], context=context)
         self._worker.moveToThread(self._worker_thread)
@@ -444,6 +504,34 @@ class AIChatPage(QWidget):
         lbl.setStyleSheet("color: #8BA3C7; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._chat_layout.insertWidget(self._chat_layout.count() - 1, lbl)
+
+    def _handle_action_btn(self, cmd: str):
+        """Run an app command from a chat button."""
+        if not self._cmd_handler:
+            return
+        
+        c = cmd.lower().strip()
+        
+        # Mapping chat commands to actual handler commands
+        cmd_map = {
+            "cleanup":     "clean my system",
+            "full clean":  "clean my system",
+            "browser":     "browser cleanup",
+            "optimize":    "clean my system",
+            "dashboard":   "open dashboard",
+            "performance": "performance tips",
+            "status":      "check system status",
+            "startup":     "startup apps",
+            "minimize":    "minimize"
+        }
+        
+        real_cmd = cmd_map.get(c, c)
+        
+        # Visual feedback in chat
+        self._add_system_message(f"🚀 Executing action: {real_cmd.capitalize()}...")
+        
+        # Execute via handler
+        self._cmd_handler.handle(real_cmd)
 
     def _scroll_to_bottom(self):
         QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(
