@@ -123,6 +123,21 @@ def main():
     os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 
     app = QApplication(sys.argv)
+
+    # Force Windows taskbar to use our custom icon
+    import ctypes
+    myappid = "quasif.ai_optimizer.1.0.0"
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception as e:
+        app_logger.debug(f"Could not set AppUserModelID: {e}")
+
+    # Set icon app-wide
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(app_dir, "assets", "icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     app.setApplicationName("AI System Optimizer Assistant")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("Mohammad Quasif")

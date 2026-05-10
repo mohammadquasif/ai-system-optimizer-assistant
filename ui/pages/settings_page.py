@@ -82,8 +82,9 @@ class SettingsPage(QWidget):
 
         test_ollama_btn = NeonButton("🔌 Test Ollama Connection", "#00D4FF")
         test_ollama_btn.clicked.connect(self._test_ollama)
-        install_ollama_btn = NeonButton("⬇️ Install Ollama Online", "#00FF88")
-        install_ollama_btn.clicked.connect(self._install_ollama_online)
+        
+        reset_ai_btn = NeonButton("🔄 Reset AI Setup (Fix Issues)", "#FFB800")
+        reset_ai_btn.clicked.connect(self._reset_ai_setup)
 
         of.addWidget(self._lbl("Ollama URL:"))
         of.addWidget(self._ollama_url)
@@ -91,7 +92,7 @@ class SettingsPage(QWidget):
         of.addWidget(self._ollama_model)
         of.addWidget(self._ollama_status_lbl)
         of.addWidget(test_ollama_btn)
-        of.addWidget(install_ollama_btn)
+        of.addWidget(reset_ai_btn)
         cl.addWidget(self._ollama_frame)
 
         # OpenAI settings
@@ -167,18 +168,33 @@ class SettingsPage(QWidget):
     def _test_api(self, provider: str):
         self._show_info(f"Testing {provider}... check logs for result.")
 
-    def _install_ollama_online(self):
-        self._show_info("Downloading Ollama installer in background...")
-        def _dl():
-            import tempfile, os
-            dest = os.path.join(tempfile.gettempdir(), "OllamaSetup.exe")
-            ok = OllamaInstaller.download_installer(dest)
-            if ok:
-                OllamaInstaller.install_from_exe(dest)
-                QTimer.singleShot(0, lambda: self._show_info("✅ Ollama installed! Restart if needed."))
-            else:
-                QTimer.singleShot(0, lambda: self._show_info("❌ Download failed. Check internet."))
-        threading.Thread(target=_dl, daemon=True).start()
+    def _reset_ai_setup(self):
+        """Clear AI settings and launch Auto Setup dialog."""
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Reset AI Setup",
+            "This will clear your current AI settings and run the auto-setup to download/configure the correct 0.5b model.\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            # Clear settings
+            set_setting("ai_provider", "none")
+            set_setting("ollama_model", "")
+            
+            # Launch setup dialog
+            try:
+                from ui.auto_setup_dialog import AutoSetupDialog
+                dlg = AutoSetupDialog(self)
+                dlg.exec()
+                
+                # Refresh local UI fields
+                self._provider_combo.setCurrentIndex(1)
+                self._ollama_model.setText(get_setting("ollama_model", "qwen2.5:0.5b"))
+                self._show_info("✅ AI Setup completed!")
+                AIService.get_instance().reload()
+            except Exception as e:
+                self._show_info(f"❌ Setup error: {e}")
 
     # ── VOICE TAB ─────────────────────────────────────────────────
 
