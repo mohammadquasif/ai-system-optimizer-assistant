@@ -40,25 +40,72 @@ class _FetchWorker(QThread):
 # ─────────────────────────────────────────────────────────────────
 
 STARTUP_KNOWN = {
-    "onedrive":          {"rec": "optional", "reason": "Cloud sync. Disable if you don't use OneDrive.", "ram_est_mb": 80},
-    "teams":             {"rec": "optional", "reason": "MS Teams auto-start. Slows boot. Disable if not used.", "ram_est_mb": 300},
-    "docker":            {"rec": "developer", "reason": "Docker Desktop. Heavy (500+ MB). Disable if not developing.", "ram_est_mb": 500},
-    "discord":           {"rec": "optional", "reason": "Gaming chat. Disable if you don't need it at startup.", "ram_est_mb": 150},
-    "spotify":           {"rec": "optional", "reason": "Music player. Disable for faster boot.", "ram_est_mb": 100},
-    "dropbox":           {"rec": "optional", "reason": "Cloud sync. Disable if not using Dropbox.", "ram_est_mb": 60},
-    "googledrive":       {"rec": "optional", "reason": "Google Drive sync. Disable if not needed.", "ram_est_mb": 80},
-    "slack":             {"rec": "optional", "reason": "Work chat. Disable for faster boot if not needed.", "ram_est_mb": 200},
-    "zoom":              {"rec": "optional", "reason": "Video meetings. Safe to disable from startup.", "ram_est_mb": 80},
-    "opera":             {"rec": "remove", "reason": "Browser at startup is unnecessary.", "ram_est_mb": 50},
-    "brave":             {"rec": "remove", "reason": "Browser at startup is unnecessary.", "ram_est_mb": 50},
-    "chrome":            {"rec": "remove", "reason": "Browser at startup is unnecessary.", "ram_est_mb": 50},
-    "msedge":            {"rec": "remove", "reason": "Edge at startup is unnecessary.", "ram_est_mb": 50},
-    "perplexity":        {"rec": "optional", "reason": "AI search app. Disable if you open it manually.", "ram_est_mb": 80},
-    "securityhealth":    {"rec": "keep", "reason": "Windows Security — important. Keep enabled.", "ram_est_mb": 20},
-    "rtk":               {"rec": "keep", "reason": "Realtek audio driver. Required for sound.", "ram_est_mb": 10},
-    "insync":            {"rec": "optional", "reason": "Cloud sync tool. Disable if not needed.", "ram_est_mb": 60},
-    "mscopilot":         {"rec": "optional", "reason": "MS Copilot. Disable if not using at startup.", "ram_est_mb": 100},
-    "aisystemoptimizer": {"rec": "keep", "reason": "This app — greets you on startup. Keep if desired.", "ram_est_mb": 60},
+    "onedrive":      {"rec": "optional", "reason": "Disable if you don't use OneDrive.",
+                     "use_case": "Syncs your files to Microsoft OneDrive cloud. Needed for auto-backup.",
+                     "ram_est_mb": 80},
+    "teams":         {"rec": "optional", "reason": "Slows boot significantly. Disable if not used daily.",
+                     "use_case": "Microsoft Teams for video calls & chats. Heavy app, 300+ MB at startup.",
+                     "ram_est_mb": 300},
+    "docker":        {"rec": "developer", "reason": "Very heavy. Disable if not actively developing.",
+                     "use_case": "Docker Desktop runs containers for software development. Uses 500+ MB RAM.",
+                     "ram_est_mb": 500},
+    "discord":       {"rec": "optional", "reason": "Disable for faster boot if you don't need it at startup.",
+                     "use_case": "Gaming & community chat app. Opens on startup consuming ~150 MB RAM.",
+                     "ram_est_mb": 150},
+    "spotify":       {"rec": "optional", "reason": "Disable — open it manually when you want music.",
+                     "use_case": "Music streaming. Safe to remove from startup; open manually when needed.",
+                     "ram_est_mb": 100},
+    "dropbox":       {"rec": "optional", "reason": "Disable if you don't rely on Dropbox sync.",
+                     "use_case": "Syncs files to Dropbox cloud storage. Disable if using OneDrive instead.",
+                     "ram_est_mb": 60},
+    "googledrive":   {"rec": "optional", "reason": "Disable if not using Google Drive.",
+                     "use_case": "Google Drive sync client. Runs in background to sync files with Google Cloud.",
+                     "ram_est_mb": 80},
+    "slack":         {"rec": "optional", "reason": "Disable for faster boot. Open manually for work.",
+                     "use_case": "Work messaging platform. Safe to remove from startup and open manually.",
+                     "ram_est_mb": 200},
+    "zoom":          {"rec": "optional", "reason": "Remove from startup — open manually before meetings.",
+                     "use_case": "Video conferencing. No need to run at startup; launch before meetings.",
+                     "ram_est_mb": 80},
+    "opera":         {"rec": "remove", "reason": "Browser startup is unnecessary and wastes RAM.",
+                     "use_case": "Web browser. No benefit running at Windows startup. Open manually.",
+                     "ram_est_mb": 50},
+    "brave":         {"rec": "remove", "reason": "Browser startup is unnecessary and wastes RAM.",
+                     "use_case": "Privacy-focused web browser. No need to auto-start with Windows.",
+                     "ram_est_mb": 50},
+    "chrome":        {"rec": "remove", "reason": "Chrome startup is unnecessary. Open manually.",
+                     "use_case": "Google Chrome browser. Wastes 50+ MB RAM by starting with Windows.",
+                     "ram_est_mb": 50},
+    "msedge":        {"rec": "remove", "reason": "Edge startup wastes RAM. Open manually when needed.",
+                     "use_case": "Microsoft Edge browser. Pre-loads for faster opening but wastes 50+ MB.",
+                     "ram_est_mb": 50},
+    "perplexity":    {"rec": "optional", "reason": "Disable if you open it manually.",
+                     "use_case": "AI-powered search assistant. No need at startup — open from taskbar.",
+                     "ram_est_mb": 80},
+    "securityhealth":{"rec": "keep", "reason": "Windows Security — critical. Must keep enabled.",
+                     "use_case": "Windows Defender security monitoring. Required for antivirus protection.",
+                     "ram_est_mb": 20},
+    "rtk":           {"rec": "keep", "reason": "Realtek audio driver — required for sound to work.",
+                     "use_case": "Realtek HD Audio driver. Required for speakers and microphone to function.",
+                     "ram_est_mb": 10},
+    "insync":        {"rec": "optional", "reason": "Disable if not actively using Insync.",
+                     "use_case": "Third-party Google Drive sync client. Disable if using Google Drive app directly.",
+                     "ram_est_mb": 60},
+    "mscopilot":     {"rec": "optional", "reason": "Disable if not using Copilot daily.",
+                     "use_case": "Microsoft Copilot AI assistant. Disable from startup to save 100 MB RAM.",
+                     "ram_est_mb": 100},
+    "aisystemoptimizer": {"rec": "keep", "reason": "This app — greets you on startup.",
+                     "use_case": "AI System Optimizer Assistant — your PC optimization tool. Keep for startup greetings.",
+                     "ram_est_mb": 60},
+    "microsoftlists":{"rec": "optional", "reason": "Can be opened manually when needed.",
+                     "use_case": "Microsoft Lists task tracker. No benefit at startup — open manually.",
+                     "ram_est_mb": 40},
+    "cometsoftware": {"rec": "optional", "reason": "Software updater — can run on-demand instead.",
+                     "use_case": "App auto-updater. Can be disabled and run manually to save background RAM.",
+                     "ram_est_mb": 30},
+    "edgeautolaunch":{"rec": "remove", "reason": "Edge pre-loader — wastes RAM. Remove.",
+                     "use_case": "Pre-loads Microsoft Edge in background to make it open faster. Not worth the RAM cost.",
+                     "ram_est_mb": 50},
 }
 
 REC_COLOR = {
@@ -75,7 +122,12 @@ def _get_recommendation(app_name: str) -> dict:
     for key, info in STARTUP_KNOWN.items():
         if key in name_lower or name_lower.startswith(key):
             return info
-    return {"rec": "unknown", "reason": "Unknown app — research before disabling.", "ram_est_mb": 0}
+    return {
+        "rec": "unknown",
+        "reason": "Unknown app — research before disabling.",
+        "use_case": "Purpose unknown. Search the app name online before disabling.",
+        "ram_est_mb": 0,
+    }
 
 
 def _disable_startup_app(app_name: str) -> bool:
@@ -172,8 +224,26 @@ class PerformancePage(QWidget):
         self._disk_container.setSpacing(8)
         disk_l.addLayout(self._disk_container)
         root.addWidget(disk_card)
+
+        # AI Tips card
+        tips_card = GlassCard(accent_color="#7C3AED")
+        tips_l = QVBoxLayout(tips_card)
+        tips_l.setContentsMargins(16, 14, 16, 14)
+        tips_hdr = QHBoxLayout()
+        tips_hdr.addWidget(self._label("🧠 AI Performance Tips", "#7C3AED"))
+        self._tips_btn = NeonButton("↻ Analyze Now", "#7C3AED")
+        self._tips_btn.setFixedWidth(120)
+        self._tips_btn.clicked.connect(self._load_tips)
+        tips_hdr.addStretch()
+        tips_hdr.addWidget(self._tips_btn)
+        tips_l.addLayout(tips_hdr)
+        self._tips_container = QVBoxLayout()
+        self._tips_container.setSpacing(6)
+        tips_l.addLayout(self._tips_container)
+        root.addWidget(tips_card)
         root.addStretch()
         self._refresh()
+        QTimer.singleShot(500, self._load_tips)  # Load tips on startup
 
     def _refresh(self):
         try:
@@ -266,6 +336,44 @@ class PerformancePage(QWidget):
     def update_metrics(self, m):
         pass  # Auto-refreshes via timer
 
+    def _load_tips(self):
+        self._tips_btn.setEnabled(False)
+        # Clear old tips
+        while self._tips_container.count():
+            item = self._tips_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        loading = QLabel("⏳ Analyzing your system...")
+        loading.setStyleSheet("color: #8BA3C7; font-size: 11px; font-family: 'Segoe UI';")
+        self._tips_container.addWidget(loading)
+
+        worker = _FetchWorker(generate_ai_tips)
+        worker.result_ready.connect(self._show_tips)
+        worker.start()
+        self._speed_worker = worker  # reuse ref slot to prevent GC
+
+    def _show_tips(self, tips: list):
+        self._tips_btn.setEnabled(True)
+        while self._tips_container.count():
+            item = self._tips_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for level, msg, color in tips:
+            row = QWidget()
+            row.setStyleSheet(f"background: {color}15; border: 1px solid {color}30; border-radius: 6px;")
+            r_layout = QHBoxLayout(row)
+            r_layout.setContentsMargins(10, 6, 10, 6)
+            r_layout.setSpacing(10)
+            lvl_lbl = QLabel(level)
+            lvl_lbl.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 700; font-family: 'Segoe UI';")
+            lvl_lbl.setFixedWidth(110)
+            msg_lbl = QLabel(msg)
+            msg_lbl.setStyleSheet("color: #E8F4FD; font-size: 11px; font-family: 'Segoe UI';")
+            msg_lbl.setWordWrap(True)
+            r_layout.addWidget(lvl_lbl)
+            r_layout.addWidget(msg_lbl, 1)
+            self._tips_container.addWidget(row)
+
     def _label(self, text, color="#8BA3C7"):
         l = QLabel(text)
         l.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 700; font-family: 'Segoe UI';")
@@ -322,15 +430,18 @@ class StartupAppsPage(QWidget):
         cl = QVBoxLayout(card)
         cl.setContentsMargins(16, 14, 16, 14)
 
-        # Table: Name | RAM Est | Recommendation | Reason | Disable
+        # Table: # | Name | Use Case | RAM Est | Status | Suggestion | Action
         self._table = QTableWidget()
-        self._table.setColumnCount(5)
-        self._table.setHorizontalHeaderLabels(["App Name", "RAM Est.", "Status", "AI Suggestion", "Action"])
+        self._table.setColumnCount(6)
+        self._table.setHorizontalHeaderLabels(
+            ["#", "App Name", "What It Does", "RAM Est.", "Status", "Action"]
+        )
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -374,48 +485,53 @@ class StartupAppsPage(QWidget):
 
         for i, app in enumerate(apps):
             name = app.get("name", "")
-            path = app.get("path", "")
             rec_info = _get_recommendation(name)
-            rec  = rec_info["rec"]
-            reason = rec_info["reason"]
-            ram_mb = rec_info["ram_est_mb"]
+            rec      = rec_info["rec"]
+            use_case = rec_info.get("use_case", "Unknown purpose.")
+            reason   = rec_info["reason"]
+            ram_mb   = rec_info["ram_est_mb"]
             total_ram += ram_mb
             if rec in ("remove", "optional"):
                 removable += 1
 
             color = REC_COLOR.get(rec, "#4A6080")
 
-            # Col 0: App Name
+            # Col 0: #
+            num_item = QTableWidgetItem(str(i + 1))
+            num_item.setForeground(QBrush(QColor("#4A6080")))
+            num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(i, 0, num_item)
+
+            # Col 1: App Name
             item_name = QTableWidgetItem(name)
             item_name.setForeground(QBrush(QColor(color)))
-            self._table.setItem(i, 0, item_name)
+            item_name.setToolTip(app.get("path", ""))
+            self._table.setItem(i, 1, item_name)
 
-            # Col 1: RAM estimate
+            # Col 2: What It Does
+            item_use = QTableWidgetItem(use_case)
+            item_use.setForeground(QBrush(QColor("#E8F4FD")))
+            item_use.setToolTip(f"{use_case}\n\nRecommendation: {reason}")
+            self._table.setItem(i, 2, item_use)
+
+            # Col 3: RAM estimate
             ram_text = f"~{ram_mb} MB" if ram_mb > 0 else "Unknown"
             item_ram = QTableWidgetItem(ram_text)
             item_ram.setForeground(QBrush(QColor("#FFB800" if ram_mb > 200 else "#8BA3C7")))
             item_ram.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 1, item_ram)
+            self._table.setItem(i, 3, item_ram)
 
-            # Col 2: Status badge
+            # Col 4: Status badge
             status_map = {
-                "keep": "✅ Keep",
-                "optional": "🟡 Optional",
-                "remove": "🔴 Remove",
-                "developer": "🔵 Dev Tool",
-                "unknown": "❓ Unknown",
+                "keep": "✅ Keep", "optional": "🟡 Optional",
+                "remove": "🔴 Remove", "developer": "🔵 Dev Tool", "unknown": "❓ Unknown",
             }
-            item_status = QTableWidgetItem(status_map.get(rec, "❓ Unknown"))
+            item_status = QTableWidgetItem(status_map.get(rec, "❓"))
             item_status.setForeground(QBrush(QColor(color)))
             item_status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 2, item_status)
+            self._table.setItem(i, 4, item_status)
 
-            # Col 3: Reason / AI suggestion
-            item_reason = QTableWidgetItem(reason)
-            item_reason.setForeground(QBrush(QColor("#8BA3C7")))
-            self._table.setItem(i, 3, item_reason)
-
-            # Col 4: Disable button (only for optional/remove)
+            # Col 5: Disable button
             if rec in ("optional", "remove", "unknown"):
                 btn_widget = QWidget()
                 btn_layout = QHBoxLayout(btn_widget)
@@ -436,9 +552,8 @@ class StartupAppsPage(QWidget):
                 btn_layout.addWidget(disable_btn)
                 btn_layout.addStretch()
                 btn_widget.setStyleSheet("background: transparent;")
-                self._table.setCellWidget(i, 4, btn_widget)
+                self._table.setCellWidget(i, 5, btn_widget)
 
-        # Summary bar
         summary = (
             f"⚡ {len(apps)} startup apps detected  |  "
             f"~{total_ram} MB RAM used at startup  |  "
@@ -474,3 +589,50 @@ class StartupAppsPage(QWidget):
         worker.result_ready.connect(_update)
         worker.start()
         self._disable_workers.append(worker)  # prevent GC
+
+
+# ─────────────────────────────────────────────────────────────────
+# AI TIPS — rule-based performance advisor
+# ─────────────────────────────────────────────────────────────────
+
+def generate_ai_tips() -> list:
+    """Analyze current system state and return actionable tips."""
+    import psutil
+    tips = []
+    vm = psutil.virtual_memory()
+    cpu = psutil.cpu_percent(interval=1)
+    du = psutil.disk_usage("C:\\")
+
+    if vm.percent > 80:
+        tips.append(("🔴 Critical", "RAM usage is very high ({}%). Close unused apps or run memory cleanup.".format(int(vm.percent)), "#FF2D55"))
+    elif vm.percent > 60:
+        tips.append(("🟡 Warning", "RAM at {}%. Consider disabling startup apps to free memory.".format(int(vm.percent)), "#FFB800"))
+    else:
+        tips.append(("🟢 Good", "RAM usage is healthy at {}%.".format(int(vm.percent)), "#00FF88"))
+
+    if cpu > 80:
+        tips.append(("🔴 CPU High", "CPU at {}%. Check for runaway processes in Task Manager.".format(int(cpu)), "#FF2D55"))
+    elif cpu > 50:
+        tips.append(("🟡 CPU Moderate", "CPU at {}%. Some apps are heavy — consider a cleanup.".format(int(cpu)), "#FFB800"))
+
+    if du.percent > 90:
+        tips.append(("🔴 Disk Critical", "Disk C:\\ is {}% full. Run cleanup immediately to avoid slowdowns.".format(int(du.percent)), "#FF2D55"))
+    elif du.percent > 75:
+        tips.append(("🟡 Disk Warning", "Disk C:\\ is {}% full. Consider clearing temp files.".format(int(du.percent)), "#FFB800"))
+    else:
+        tips.append(("🟢 Disk OK", "Disk space healthy — {:.1f} GB free on C:\\." .format(du.free / 1e9), "#00FF88"))
+
+    # Check for heavy startup apps
+    try:
+        from monitoring.system_monitor import get_startup_apps
+        startup = get_startup_apps()
+        heavy = [a["name"] for a in startup if any(
+            k in a["name"].lower() for k in ["teams", "docker", "discord", "slack"]
+        )]
+        if heavy:
+            tips.append(("💡 Startup Tip", f"Heavy apps in startup: {', '.join(heavy[:3])}. Disable from Startup Apps tab to speed up boot.", "#00D4FF"))
+    except Exception:
+        pass
+
+    tips.append(("💡 Best Practice", "Run a system cleanup weekly to keep your PC running at peak speed.", "#7C3AED"))
+    return tips
