@@ -223,27 +223,31 @@ class CleanupPage(QWidget):
             key: cb.isChecked() for key, cb in self._checkboxes.items()
         }
 
+        # Thread-safe: post UI updates to main thread via QTimer
         def progress_cb(msg: str, pct: int):
-            self._progress_lbl.setText(msg)
-            self._progress_bar.setValue(pct)
-            self._log(f"  → {msg}")
+            QTimer.singleShot(0, lambda m=msg, p=pct: (
+                self._progress_lbl.setText(m),
+                self._progress_bar.setValue(p),
+                self._log(f"  → {m}"),
+            ))
 
         def done_cb(result):
-            self._is_running = False
-            self._start_btn.setEnabled(True)
-            self._log(f"\n✅ {result.summary()}")
-            now = datetime.now().strftime("%Y-%m-%d %H:%M")
-            self.cleanup_done.emit(now)
-            # Save to history
-            try:
-                with get_db() as conn:
-                    conn.execute(
-                        "INSERT INTO cleanup_history (timestamp, items_cleaned, space_freed_mb, status) VALUES (?, ?, ?, ?)",
-                        (now, str(list(options.keys())), result.space_freed_mb, "success"),
-                    )
-                    conn.commit()
-            except Exception:
-                pass
+            def _finish(r=result):
+                self._is_running = False
+                self._start_btn.setEnabled(True)
+                self._log(f"\n✅ {r.summary()}")
+                now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                self.cleanup_done.emit(now)
+                try:
+                    with get_db() as conn:
+                        conn.execute(
+                            "INSERT INTO cleanup_history (timestamp, items_cleaned, space_freed_mb, status) VALUES (?, ?, ?, ?)",
+                            (now, str(list(options.keys())), r.space_freed_mb, "success"),
+                        )
+                        conn.commit()
+                except Exception:
+                    pass
+            QTimer.singleShot(0, _finish)
 
         bg = BackgroundCleanup(options, progress_cb=progress_cb, done_cb=done_cb)
         bg.start()
