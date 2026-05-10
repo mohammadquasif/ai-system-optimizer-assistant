@@ -190,6 +190,35 @@ class AIChatPage(QWidget):
         thinking_row.addStretch()
         root.addLayout(thinking_row)
 
+        # ── Quick chip buttons ────────────────────────────────────
+        chips_row = QHBoxLayout()
+        chips_row.setSpacing(8)
+        chip_defs = [
+            ("🔍 System Status",   "how is my system doing?"),
+            ("🧹 Clean System",    "clean my system"),
+            ("🌐 Browser Cleanup", "browser cleanup"),
+            ("⚡ Performance Tips","give me performance tips"),
+            ("🚀 Startup Apps",    "analyze my startup apps"),
+            ("💾 RAM Usage",       "how much RAM am I using?"),
+        ]
+        for label, prompt in chip_defs:
+            btn = QPushButton(label)
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #111827; color: #00D4FF;
+                    border: 1px solid #00D4FF40; border-radius: 15px;
+                    padding: 0 14px; font-size: 11px; font-family: 'Segoe UI';
+                }
+                QPushButton:hover { background: #1E2D45; border-color: #00D4FF; }
+                QPushButton:pressed { background: #00D4FF20; }
+            """)
+            btn.clicked.connect(lambda _, p=prompt: self._chip_clicked(p))
+            chips_row.addWidget(btn)
+        chips_row.addStretch()
+        root.addLayout(chips_row)
+
         # ── Input row ─────────────────────────────────────────────
         input_card = GlassCard(accent_color="#00D4FF")
         input_layout = QHBoxLayout(input_card)
@@ -280,6 +309,10 @@ class AIChatPage(QWidget):
         self._input.setText(text)
         self._send_message()
 
+    def _chip_clicked(self, prompt: str):
+        self._input.setText(prompt)
+        self._send_message()
+
     def _send_message(self):
         text = self._input.text().strip()
         if not text:
@@ -290,13 +323,9 @@ class AIChatPage(QWidget):
         if self._cmd_handler:
             handled = self._cmd_handler.handle_chat(text, speak_response=False)
             if handled:
-                # Show user message in chat and a brief system response
+                # Show user message in chat
                 self._input.clear()
                 self._add_bubble(text, "user")
-                action_reply = self._local_action_reply(text)
-                reply_bubble = self._add_bubble(action_reply, "assistant")
-                # Also speak the response
-                self._cmd_handler.voice.speak(action_reply)
                 return
 
         service = AIService.get_instance()
@@ -315,20 +344,41 @@ class AIChatPage(QWidget):
         self._chat_history.append({"role": "user", "content": text})
         self._save_message("user", text)
 
-        # Show thinking
+        # Show thinking with status updates
         self._thinking.start()
+        self._thinking_lbl.setText("AI is analyzing your system...")
         self._thinking_lbl.show()
 
-        # Start AI response bubble (empty, will stream into it)
-        self._current_bubble = self._add_bubble("", "assistant")
+        # Simulate steps for a "pro" feel
+        def _update_step(step_idx):
+            steps = [
+                "🔍 Gathering system metrics...",
+                "📊 Checking RAM & CPU peaks...",
+                "🧠 Generating AI recommendation...",
+                "✨ Finalizing report..."
+            ]
+            if step_idx < len(steps):
+                self._thinking_lbl.setText(steps[step_idx])
+                QTimer.singleShot(800, lambda: _update_step(step_idx + 1))
+        
+        _update_step(0)
+
+        # Start AI response bubble
+        prefix = ""
+        if any(k in text.lower() for k in ["analyze", "status", "how is my", "report"]):
+            prefix = "📊 **System Analysis Report**\n" + ("─"*40) + "\n\n"
+        self._current_bubble = self._add_bubble(prefix, "assistant")
 
         # Background thread
         self._worker_thread = QThread()
         import psutil
+        m = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=None)
+        disk = psutil.disk_usage('C:\\')
         context = (
-            f"CPU: {psutil.cpu_percent()}% | "
-            f"RAM: {psutil.virtual_memory().percent}% | "
-            f"Disk: {psutil.disk_usage('C:\\').percent}%"
+            f"SYSTEM STATE: CPU={cpu}%, RAM={m.percent}% ({m.available//1024//1024}MB free), "
+            f"DISK={disk.percent}% ({disk.free//1024//1024//1024}GB free). "
+            "Please provide a structured report with optimization tips if needed."
         )
         self._worker = AIWorker(text, self._chat_history[:-1], context=context)
         self._worker.moveToThread(self._worker_thread)

@@ -230,21 +230,21 @@ class VoiceCommandHandler:
             "system cleanup", "optimize my pc", "speed up my pc",
             "clean up pc", "clean pc", "run cleanup", "quick clean",
         ]):
-            self.voice.speak(f"Sure {name}! Let me start cleaning your system right now.")
+            self.voice.speak(f"Sure {name}! I'm starting a full system cleanup now. You can see the progress in the Cleanup tab.")
             self._do("navigate", "cleanup")
             # Small delay so navigation completes before running
             threading.Timer(0.8, lambda: self._do("cleanup")).start()
-            return
+            return True
 
         # ── BROWSER CLEANUP ───────────────────────────────────────
         if any(kw in t for kw in [
             "browser", "browser cache", "clean browser", "browser cleanup",
             "clear browser", "chrome", "edge cache", "firefox cache",
         ]):
-            self.voice.speak(f"Sure {name}! Opening browser cleanup for you.")
+            self.voice.speak(f"Sure {name}! Opening the browser optimization tool now.")
             self._do("navigate", "browser")
             threading.Timer(0.8, lambda: self._do("browser_cleanup")).start()
-            return
+            return True
 
         # ── STATUS / HEALTH ───────────────────────────────────────
         if any(kw in t for kw in [
@@ -253,7 +253,7 @@ class VoiceCommandHandler:
             "how are you", "check my system",
         ]):
             self._do("status")
-            return
+            return True
 
         # ── PERFORMANCE PAGE ──────────────────────────────────────
         if any(kw in t for kw in ["performance", "tips", "performance tips", "startup apps"]):
@@ -297,11 +297,7 @@ class VoiceCommandHandler:
             return
 
         # ── CONFUSED — ask for clarification ─────────────────────
-        self.voice.speak(
-            f"I'm not sure what you meant, {name}. "
-            "Did you want me to clean your system, clean the browser, "
-            "or check your system status? Please say one of these options."
-        )
+        return False
 
     def handle_chat(self, text: str, speak_response: bool = True):
         """

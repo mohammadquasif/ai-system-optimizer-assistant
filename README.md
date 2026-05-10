@@ -2,15 +2,15 @@
 
 <div align="center">
 
-![AI System Optimizer](https://img.shields.io/badge/AI%20System%20Optimizer-v1.0.0-00D4FF?style=for-the-badge&logo=windows&logoColor=white)
+![AI System Optimizer](https://img.shields.io/badge/AI%20System%20Optimizer-v1.1.0-00D4FF?style=for-the-badge&logo=windows&logoColor=white)
 ![Keywords](https://img.shields.io/badge/Keywords-aiero_optimize-00FF88?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Ollama](https://img.shields.io/badge/Ollama-0.5b%20to%201.5b-black?style=for-the-badge)
+![Ollama](https://img.shields.io/badge/Ollama-0.5b%20Lock-black?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-Personal%20Use-00FF88?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?style=for-the-badge&logo=windows)
 
 **One-click AI-powered Windows optimizer.**  
-*#aiero #optimize • Auto Cleanup • Local AI • Voice Commands • Chip UI • On-Demand Only*
+*#aiero #optimize • AI Startup Analysis • Auto Repair • Local 0.5b AI • Voice Chat • Pro Tips*
 
 **by [Mohammad Quasif, DBA (AI)](https://github.com/mohammadquasif)**
 
@@ -22,13 +22,14 @@
 
 The **AI System Optimizer Assistant** is a free, privacy-first desktop app that:
 
-- 🤖 **Installs Ollama automatically** — no manual setup needed
-- 🧹 **Cleans your PC safely** — 12+ cleanup tasks, never touches personal files
-- 📊 **Monitors system health** in real time — CPU, RAM, Disk gauges
-- 🎙️ **Greets you by voice** on startup, listens to spoken commands
-- 💬 **Chat-style chip UI** — click chips, type, or speak to run commands
-- 💤 **Auto-closes after 5 minutes idle** — frees RAM when you are not using it
-- 🌐 **Works offline** after first setup
+- 🤖 **Installs Ollama automatically** — no manual setup needed.
+- 🧹 **Cleans your PC safely** — 12+ cleanup tasks, never touches personal files.
+- 🚀 **AI Startup Analysis** — Use local LLM to identify and explain mysterious background apps.
+- 📊 **Monitors system health** in real time — CPU, RAM, Disk gauges.
+- 🎙️ **Voice-Chat Integration** — Speak commands or type; same AI bubbles and progress.
+- 🔧 **Fix Ollama (Auto-Repair)** — One-click diagnostic and model puller in Settings.
+- 💤 **Auto-closes after 5 minutes idle** — frees RAM when you are not using it.
+- 🌐 **Works offline** after first setup.
 
 ---
 
