@@ -13,6 +13,7 @@ from cleanup.cleanup_engine import BackgroundCleanup
 class BrowserOptimizePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._bg_thread = None  # prevent GC
         self._setup_ui()
 
     def _setup_ui(self):
@@ -120,8 +121,8 @@ class BrowserOptimizePage(QWidget):
             self._opt_btn.setEnabled(True)
             self._log.append(f"\n✅ {result.summary()}")
 
-        bg = BackgroundCleanup(options, progress_cb=progress_cb, done_cb=done_cb)
-        bg.start()
+        self._bg_thread = BackgroundCleanup(options, progress_cb=progress_cb, done_cb=done_cb)
+        self._bg_thread.start()
 
 
 

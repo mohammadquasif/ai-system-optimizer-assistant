@@ -210,16 +210,31 @@ class SettingsPage(QWidget):
         return w
 
     def _test_voice(self):
-        name = self._username_field.text() or "User"
+        name = self._username_field.text().strip() or "User"
         from services.voice_service import VoiceAssistant
         v = VoiceAssistant()
         v.start()
-        v.greet(name)
+        v.speak(f"Hello {name}! This is how I will greet you. Your AI system optimizer is ready.")
 
     def _save_voice(self):
+        name = self._username_field.text().strip()
+        if not name:
+            self._show_info("Please enter a name before saving.")
+            return
         set_setting("voice_enabled", "true" if self._voice_enabled.isChecked() else "false")
-        set_setting("user_name", self._username_field.text())
-        self._show_info("✅ Voice settings saved!")
+        set_setting("user_name", name)
+        # Update the main window's username so it takes effect immediately
+        try:
+            from PyQt6.QtWidgets import QApplication
+            for w in QApplication.topLevelWidgets():
+                if hasattr(w, "_user_name"):
+                    w._user_name = name
+                    if hasattr(w, "_voice_handler"):
+                        w._voice_handler.user_name = name
+        except Exception:
+            pass
+        self._show_info(f"✅ Saved! AI will now call you '{name}'.\nTest it with the Test button above.")
+
 
     # ── SYSTEM TAB ────────────────────────────────────────────────
 
