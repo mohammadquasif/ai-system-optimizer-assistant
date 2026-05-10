@@ -134,7 +134,7 @@ def main():
 
     # Set icon app-wide
     app_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(app_dir, "assets", "icon.png")
+    icon_path = os.path.join(app_dir, "assets", "icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
