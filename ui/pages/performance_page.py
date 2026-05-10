@@ -232,7 +232,7 @@ class PerformancePage(QWidget):
         tips_hdr = QHBoxLayout()
         tips_hdr.addWidget(self._label("🧠 AI Performance Tips", "#7C3AED"))
         self._tips_btn = NeonButton("↻ Analyze Now", "#7C3AED")
-        self._tips_btn.setFixedWidth(120)
+        self._tips_btn.setFixedWidth(140)
         self._tips_btn.clicked.connect(self._load_tips)
         tips_hdr.addStretch()
         tips_hdr.addWidget(self._tips_btn)
@@ -370,21 +370,33 @@ class PerformancePage(QWidget):
                 f"background: {color}18; "
                 f"border: 1px solid {color}50; "
                 "border-radius: 6px; "
-                "padding: 4px;"
             )
-            row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
             r_layout = QHBoxLayout(row)
-            r_layout.setContentsMargins(10, 5, 10, 5)
-            r_layout.setSpacing(10)
+            r_layout.setContentsMargins(12, 8, 12, 8)
+            r_layout.setSpacing(12)
+
             lvl_lbl = QLabel(level)
-            lvl_lbl.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 700; font-family: 'Segoe UI';")
+            lvl_lbl.setStyleSheet(
+                f"color: {color}; font-size: 11px; font-weight: 700; "
+                "font-family: 'Segoe UI'; background: transparent; border: none;"
+            )
             lvl_lbl.setFixedWidth(110)
+
             msg_lbl = QLabel(msg)
-            msg_lbl.setStyleSheet("color: #E8F4FD; font-size: 11px; font-family: 'Segoe UI';")
+            msg_lbl.setStyleSheet(
+                "color: #E8F4FD; font-size: 11px; font-family: 'Segoe UI'; "
+                "background: transparent; border: none;"
+            )
             msg_lbl.setWordWrap(True)
+            msg_lbl.setMinimumHeight(30) # Ensure text isn't cut off
+
             r_layout.addWidget(lvl_lbl)
             r_layout.addWidget(msg_lbl, 1)
-            self._tips_container.addWidget(row)
+
+            outer_l.addWidget(row, 1)
+            self._tips_container.addWidget(outer)
+
 
     def _label(self, text, color="#8BA3C7"):
         l = QLabel(text)

@@ -427,32 +427,32 @@ class MainWindow(QMainWindow):
         self._topbar_health.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; font-family: 'Segoe UI';")
 
     def _refresh_ai_status(self):
-        """Non-blocking: check AI status in background thread."""
+        """Non-blocking: check AI status safely using QThread worker."""
         self._ai_check_count = getattr(self, "_ai_check_count", 0) + 1
-        # After 12 checks (~60s), slow down to every 30s
         if self._ai_check_count == 12:
             self._ai_timer.setInterval(30000)
 
-        import threading
         def _check():
-            try:
-                from ai.ollama_manager import OllamaManager
-                ollama_ok = OllamaManager.is_api_running()
-                if ollama_ok:
-                    # Reload AI service so it picks up newly configured model
-                    from ai.ai_service import AIService
-                    service = AIService.get_instance()
-                    service.reload()
-                    configured = service.is_configured
-                    model = get_setting("ollama_model", "")
-                else:
-                    configured = False
-                    model = ""
-                QTimer.singleShot(0, lambda a=ollama_ok, c=configured, m=model:
-                    self._apply_ai_status(a, c, m))
-            except Exception:
-                QTimer.singleShot(0, lambda: self._apply_ai_status(False, False, ""))
-        threading.Thread(target=_check, daemon=True).start()
+            from ai.ollama_manager import OllamaManager
+            from ai.ai_service import AIService
+            ollama_ok = OllamaManager.is_api_running()
+            if ollama_ok:
+                service = AIService.get_instance()
+                service.reload()
+                configured = service.is_configured
+                model = get_setting("ollama_model", "")
+            else:
+                configured = False
+                model = ""
+            return (ollama_ok, configured, model)
+
+        from ui.pages.performance_page import _FetchWorker
+        self._ai_worker = _FetchWorker(_check)
+        self._ai_worker.result_ready.connect(
+            lambda res: self._apply_ai_status(res[0], res[1], res[2])
+        )
+        self._ai_worker.start()
+
 
     def _apply_ai_status(self, ollama_ok: bool, configured: bool, model: str):
         if ollama_ok:

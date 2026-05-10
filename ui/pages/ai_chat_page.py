@@ -235,21 +235,25 @@ class AIChatPage(QWidget):
     # ─────────────────────────────────────────────────────────────
 
     def _refresh_ai_status(self):
-        """Non-blocking: check AI status in background thread."""
-        import threading
+        """Non-blocking: check AI status safely using QThread worker."""
         def _check():
             try:
                 service = AIService.get_instance()
                 configured = service.is_configured
                 if not configured:
-                    QTimer.singleShot(0, lambda: self._apply_status(False, False, ""))
-                    return
-                available = service.is_available  # network call — safe in thread
+                    return (False, False, "")
+                available = service.is_available
                 model = get_setting("ollama_model", "")
-                QTimer.singleShot(0, lambda a=available, m=model: self._apply_status(True, a, m))
-            except Exception as e:
-                QTimer.singleShot(0, lambda: self._apply_status(False, False, ""))
-        threading.Thread(target=_check, daemon=True).start()
+                return (True, available, model)
+            except Exception:
+                return (False, False, "")
+
+        from ui.pages.performance_page import _FetchWorker
+        self._status_worker = _FetchWorker(_check)
+        self._status_worker.result_ready.connect(
+            lambda res: self._apply_status(res[0], res[1], res[2])
+        )
+        self._status_worker.start()
 
     def _apply_status(self, configured: bool, available: bool, model: str):
         if configured and available:
