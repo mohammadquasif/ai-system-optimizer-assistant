@@ -32,14 +32,26 @@ logger = logging.getLogger(__name__)
 
 
 def _get_system_username() -> str:
-    """Get real Windows username for greeting."""
+    """
+    Extract a clean, speakable first name from the Windows login name.
+    'quasi_7p4hqhx' → 'Quasi'  |  'john.doe' → 'John'  |  'JohnSmith' → 'Johnsmith'
+    Ignores machine-ID suffixes (numbers/underscores after the real name).
+    """
     try:
-        import getpass
-        name = getpass.getuser()
-        # Clean up machine-style names
-        if "\\" in name:
-            name = name.split("\\")[-1]
-        return name.replace("_", " ").title()
+        import getpass, re
+        raw = getpass.getuser()
+        # Split on any non-alpha character
+        parts = re.split(r'[^a-zA-Z]+', raw)
+        # Pick the longest alphabetic segment that is at least 3 chars
+        alpha_parts = [p for p in parts if len(p) >= 3]
+        if alpha_parts:
+            # Prefer the first meaningful segment
+            name = max(alpha_parts[:2], key=len)  # first 2 parts, pick longer
+        elif parts:
+            name = parts[0]
+        else:
+            name = raw
+        return name.capitalize()
     except Exception:
         return get_setting("user_name", "User")
 
@@ -345,7 +357,7 @@ class MainWindow(QMainWindow):
             self._voice.start()
             QTimer.singleShot(2000, lambda: self._voice.greet(self._user_name))
 
-        # Setup voice command handler
+        # Setup voice command handler with username for conversational responses
         self._voice_handler = VoiceCommandHandler(self._voice, {
             "cleanup":  lambda: self._pages["cleanup"].run_quick_cleanup(),
             "minimize": self.hide,
@@ -355,7 +367,8 @@ class MainWindow(QMainWindow):
                 f"CPU at {self._monitor.latest.cpu_percent:.0f} percent. "
                 f"RAM at {self._monitor.latest.ram_percent:.0f} percent."
             ),
-        })
+        }, user_name=self._user_name)
+
 
     @pyqtSlot(object)
     def _on_metrics_main_thread(self, m: SystemMetrics):
