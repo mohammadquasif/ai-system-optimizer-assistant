@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot
 from PyQt6.QtGui import QFont, QColor
 
 from ui.widgets import GlassCard, NeonButton, NeonProgressBar
-from cleanup.cleanup_engine import BackgroundCleanup, estimate_cleanup_size
+from cleanup.cleanup_engine import BackgroundCleanup
 from config.settings import get_setting, set_setting, get_db
 from datetime import datetime
 
@@ -166,11 +166,21 @@ class CleanupPage(QWidget):
 
     def _estimate_space(self):
         self._estimate_lbl.setText("⏳ Estimating...")
-        QTimer.singleShot(100, self._do_estimate)
+        # Run estimation in background thread to avoid freezing UI
+        from PyQt6.QtCore import QThread, QObject, pyqtSignal as Signal, pyqtSlot as Slot
 
-    def _do_estimate(self):
-        try:
-            size_bytes = estimate_cleanup_size()
+        class _EstWorker(QObject):
+            done = Signal(int)
+            @Slot()
+            def run(self):
+                try:
+                    from cleanup.cleanup_engine import estimate_cleanup_size
+                    size = estimate_cleanup_size()
+                except Exception:
+                    size = 0
+                self.done.emit(size)
+
+        def _on_estimate(size_bytes):
             if size_bytes > 1e9:
                 text = f"~{size_bytes/1e9:.2f} GB can be freed"
             elif size_bytes > 1e6:
@@ -178,8 +188,15 @@ class CleanupPage(QWidget):
             else:
                 text = f"~{size_bytes/1e3:.0f} KB can be freed"
             self._estimate_lbl.setText(f"💾 Estimated: {text}")
-        except Exception:
-            self._estimate_lbl.setText("Estimate unavailable")
+            self._est_thread.quit()
+            self._est_thread.deleteLater()
+
+        self._est_thread = QThread()
+        self._est_worker = _EstWorker()
+        self._est_worker.moveToThread(self._est_thread)
+        self._est_thread.started.connect(self._est_worker.run)
+        self._est_worker.done.connect(_on_estimate)
+        self._est_thread.start()
 
     def _confirm_and_run(self):
         # Check for risky options

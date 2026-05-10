@@ -54,12 +54,31 @@ class BrowserOptimizePage(QWidget):
         self._firefox_cb = QCheckBox("Mozilla Firefox")
         self._firefox_cb.setChecked(True)
 
-        for cb in [self._chrome_cb, self._edge_cb, self._brave_cb, self._firefox_cb]:
-            cb.setStyleSheet(cb_style)
+        self._smart_cb = QCheckBox("🚀 Smart Optimization (Vacuum DBs only)")
+        self._smart_cb.setToolTip("Speeds up the browser WITHOUT deleting cache (prevents temporary slowness after cleanup).")
+        self._smart_cb.setChecked(False)
+        self._smart_cb.setStyleSheet("color: #00FF88; font-family: 'Segoe UI'; font-size: 13px; font-weight: 700;")
+        
+        for cb in [self._chrome_cb, self._edge_cb, self._brave_cb, self._firefox_cb, self._smart_cb]:
+            cb.setStyleSheet(cb_style if cb != self._smart_cb else self._smart_cb.styleSheet())
             bl.addWidget(cb)
 
-        bl.addWidget(self._lbl("What will be cleaned: Cache files, GPU shader cache, temp session data", "#8BA3C7"))
+        bl.addWidget(self._lbl("What will be cleaned: Cache files, GPU shader cache, and DB vacuuming", "#8BA3C7"))
         root.addWidget(browsers_card)
+        
+        # Slowness Note
+        slow_note = GlassCard(accent_color="#FFB800")
+        snl = QVBoxLayout(slow_note)
+        sn_lbl = QLabel(
+            "⚠️ **Feeling slowness after cleanup?**\n"
+            "If you clear the FULL CACHE, your browser must re-download images and scripts "
+            "the next time you visit a website. This is normal but can feel slow at first.\n\n"
+            "✅ **Pro Tip:** Use 'Smart Optimization' for a daily speed boost without the re-caching delay."
+        )
+        sn_lbl.setStyleSheet("color: #E8F4FD; font-size: 11px; font-family: 'Segoe UI';")
+        sn_lbl.setWordWrap(True)
+        snl.addWidget(sn_lbl)
+        root.addWidget(slow_note)
 
         # Optimize button
         btn_row = QHBoxLayout()
@@ -103,7 +122,8 @@ class BrowserOptimizePage(QWidget):
 
         options = {
             "clean_temp": False,
-            "clean_browser_cache": True,
+            "clean_browser_cache": not self._smart_cb.isChecked(),
+            "clean_db_vacuum": True,  # Always vacuum as it's safe
             "clean_recycle": False,
             "clean_thumbnails": False,
             "clean_logs": False,

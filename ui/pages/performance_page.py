@@ -130,20 +130,97 @@ def _get_recommendation(app_name: str) -> dict:
     }
 
 
-def _disable_startup_app(app_name: str) -> bool:
-    """Remove an app from Windows startup registry (current user only)."""
-    try:
-        import winreg
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            0, winreg.KEY_SET_VALUE,
-        )
-        winreg.DeleteValue(key, app_name)
-        winreg.CloseKey(key)
-        return True
-    except Exception:
-        return False
+def _disable_startup_app(app: dict) -> tuple:
+    """
+    Disable/remove a startup entry from any source.
+    Returns (success: bool, message: str)
+    """
+    import winreg, subprocess, os
+    from pathlib import Path
+
+    name   = app.get("name", "")
+    source = app.get("source", "")
+    path   = app.get("path", "")
+
+    # ── Registry sources ──────────────────────────────────────────
+    reg_map = {
+        "Registry (User)":        (winreg.HKEY_CURRENT_USER,  r"Software\Microsoft\Windows\CurrentVersion\Run"),
+        "Registry (User RunOnce)":(winreg.HKEY_CURRENT_USER,  r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+        "Registry (System)":      (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run"),
+        "Registry (System RunOnce)":(winreg.HKEY_LOCAL_MACHINE,r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+        "Registry (32-bit)":      (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"),
+    }
+    if source in reg_map:
+        hive, reg_path = reg_map[source]
+        try:
+            key = winreg.OpenKey(hive, reg_path, 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(key, name)
+            winreg.CloseKey(key)
+            return True, f"Removed '{name}' from {source}."
+        except FileNotFoundError:
+            return False, f"'{name}' not found in {source}."
+        except PermissionError:
+            return False, f"Admin rights required to remove '{name}' from {source}."
+        except Exception as e:
+            return False, str(e)
+
+    # ── Startup Folder sources ─────────────────────────────────────
+    if "Startup Folder" in source:
+        try:
+            p = Path(path)
+            if p.exists():
+                p.unlink()
+                return True, f"Removed '{name}' from startup folder."
+            else:
+                return False, f"File not found: {path}"
+        except PermissionError:
+            return False, f"Admin rights required to remove '{name}' from startup folder."
+        except Exception as e:
+            return False, str(e)
+
+    # ── Task Scheduler ─────────────────────────────────────────────
+    if source == "Task Scheduler":
+        task_name = name.strip("\\")
+        try:
+            result = subprocess.run(
+                ["schtasks", "/change", "/tn", task_name, "/disable"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                return True, f"Disabled Task Scheduler task '{task_name}'."
+            else:
+                return False, f"Could not disable task: {result.stderr.strip()}"
+        except Exception as e:
+            return False, str(e)
+
+    return False, f"Unknown source '{source}' — cannot disable automatically."
+
+
+def _remove_startup_app(app: dict) -> tuple:
+    """Full delete — same logic as disable but for Task Scheduler it deletes the task."""
+    import winreg, subprocess
+    from pathlib import Path
+
+    name   = app.get("name", "")
+    source = app.get("source", "")
+    path   = app.get("path", "")
+
+    if source == "Task Scheduler":
+        task_name = name.strip("\\")
+        try:
+            result = subprocess.run(
+                ["schtasks", "/delete", "/tn", task_name, "/f"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                return True, f"Deleted task '{task_name}'."
+            else:
+                return False, f"Could not delete task: {result.stderr.strip()}"
+        except Exception as e:
+            return False, str(e)
+
+    # For registry / folder, disable = remove (same thing)
+    return _disable_startup_app(app)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -489,16 +566,18 @@ class StartupAppsPage(QWidget):
 
         # Table: # | Name | Use Case | RAM Est | Status | Suggestion | Action
         self._table = QTableWidget()
-        self._table.setColumnCount(6)
+        self._table.setColumnCount(7)
         self._table.setHorizontalHeaderLabels(
-            ["#", "App Name", "What It Does", "RAM Est.", "Status", "Action"]
+            ["#", "App Name", "Source", "What It Does / AI Advice", "RAM Est.", "AI Rating", "Action"]
         )
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(6, 160)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -539,12 +618,14 @@ class StartupAppsPage(QWidget):
     def _populate(self, apps: list):
         self._apps = apps
         self._table.setRowCount(len(apps))
+        self._table.verticalHeader().setDefaultSectionSize(46)
 
         total_ram = 0
         removable = 0
 
         for i, app in enumerate(apps):
-            name = app.get("name", "")
+            name     = app.get("name", "")
+            source   = app.get("source", "Registry")
             rec_info = _get_recommendation(name)
             rec      = rec_info["rec"]
             use_case = rec_info.get("use_case", "Unknown purpose.")
@@ -556,7 +637,7 @@ class StartupAppsPage(QWidget):
 
             color = REC_COLOR.get(rec, "#4A6080")
 
-            # Col 0: #
+            # Col 0: row number
             num_item = QTableWidgetItem(str(i + 1))
             num_item.setForeground(QBrush(QColor("#4A6080")))
             num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -568,59 +649,101 @@ class StartupAppsPage(QWidget):
             item_name.setToolTip(app.get("path", ""))
             self._table.setItem(i, 1, item_name)
 
-            # Col 2: What It Does
-            item_use = QTableWidgetItem(use_case)
+            # Col 2: Source (Registry/Folder/Task)
+            src_short = source.replace("Registry ", "").replace("Startup Folder ", "📁 ")
+            if "Task Scheduler" in source:
+                src_short = "🗓 Task"
+            elif "System" in source:
+                src_short = "🖥 Registry"
+            elif "User" in source and "RunOnce" not in source:
+                src_short = "👤 Registry"
+            elif "32-bit" in source:
+                src_short = "🖥 Reg 32b"
+            item_src = QTableWidgetItem(src_short)
+            item_src.setForeground(QBrush(QColor("#8BA3C7")))
+            item_src.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_src.setToolTip(source + "\n" + app.get("path", ""))
+            self._table.setItem(i, 2, item_src)
+
+            # Col 3: What It Does / AI Advice
+            advice_text = f"{use_case}  |  💡 {reason}"
+            item_use = QTableWidgetItem(advice_text)
             item_use.setForeground(QBrush(QColor("#E8F4FD")))
-            item_use.setToolTip(f"{use_case}\n\nRecommendation: {reason}")
-            self._table.setItem(i, 2, item_use)
+            item_use.setToolTip(advice_text)
+            self._table.setItem(i, 3, item_use)
 
-            # Col 3: RAM estimate
-            ram_text = f"~{ram_mb} MB" if ram_mb > 0 else "Unknown"
+            # Col 4: RAM estimate
+            ram_text = f"~{ram_mb} MB" if ram_mb > 0 else "?"
+            ram_color = "#FF2D55" if ram_mb > 300 else "#FFB800" if ram_mb > 100 else "#8BA3C7"
             item_ram = QTableWidgetItem(ram_text)
-            item_ram.setForeground(QBrush(QColor("#FFB800" if ram_mb > 200 else "#8BA3C7")))
+            item_ram.setForeground(QBrush(QColor(ram_color)))
             item_ram.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 3, item_ram)
+            self._table.setItem(i, 4, item_ram)
 
-            # Col 4: Status badge
+            # Col 5: AI Rating badge
             status_map = {
-                "keep": "✅ Keep", "optional": "🟡 Optional",
-                "remove": "🔴 Remove", "developer": "🔵 Dev Tool", "unknown": "❓ Unknown",
+                "keep":      "✅ Keep",
+                "optional":  "🟡 Optional",
+                "remove":    "🔴 Remove",
+                "developer": "🔵 Dev Tool",
+                "unknown":   "❓ Unknown",
             }
             item_status = QTableWidgetItem(status_map.get(rec, "❓"))
             item_status.setForeground(QBrush(QColor(color)))
             item_status.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 4, item_status)
+            self._table.setItem(i, 5, item_status)
 
-            # Col 5: Disable button
-            if rec in ("optional", "remove", "unknown"):
+            # Col 6: Action buttons — Disable + Remove
+            if rec != "keep":
                 btn_widget = QWidget()
+                btn_widget.setStyleSheet("background: transparent;")
                 btn_layout = QHBoxLayout(btn_widget)
-                btn_layout.setContentsMargins(4, 2, 4, 2)
-                disable_btn = QPushButton("Disable")
-                disable_btn.setFixedHeight(24)
-                disable_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                disable_btn.setStyleSheet("""
+                btn_layout.setContentsMargins(4, 3, 4, 3)
+                btn_layout.setSpacing(6)
+
+                # Disable button (for registry: removes entry; for tasks: disables task)
+                dis_btn = QPushButton("⏸ Disable")
+                dis_btn.setFixedHeight(26)
+                dis_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                dis_btn.setStyleSheet("""
                     QPushButton {
-                        background: #FF2D5520; color: #FF2D55;
-                        border: 1px solid #FF2D5540; border-radius: 4px;
-                        font-size: 10px; font-family: 'Segoe UI'; padding: 0 8px;
+                        background: #FFB80020; color: #FFB800;
+                        border: 1px solid #FFB80050; border-radius: 5px;
+                        font-size: 10px; font-family: 'Segoe UI'; font-weight: 600;
+                        padding: 0 8px;
                     }
-                    QPushButton:hover { background: #FF2D5540; }
+                    QPushButton:hover { background: #FFB80050; }
                     QPushButton:disabled { color: #4A6080; border-color: #1E2D45; background: transparent; }
                 """)
-                disable_btn.clicked.connect(lambda _, n=name, r=i: self._disable_app(n, r))
-                btn_layout.addWidget(disable_btn)
-                btn_layout.addStretch()
-                btn_widget.setStyleSheet("background: transparent;")
-                self._table.setCellWidget(i, 5, btn_widget)
+                dis_btn.clicked.connect(lambda _, a=app, r=i: self._do_action(a, r, remove=False))
+
+                # Remove button (hard delete / task delete)
+                rem_btn = QPushButton("🗑 Remove")
+                rem_btn.setFixedHeight(26)
+                rem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                rem_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #FF2D5520; color: #FF2D55;
+                        border: 1px solid #FF2D5550; border-radius: 5px;
+                        font-size: 10px; font-family: 'Segoe UI'; font-weight: 600;
+                        padding: 0 8px;
+                    }
+                    QPushButton:hover { background: #FF2D5550; }
+                    QPushButton:disabled { color: #4A6080; border-color: #1E2D45; background: transparent; }
+                """)
+                rem_btn.clicked.connect(lambda _, a=app, r=i: self._do_action(a, r, remove=True))
+
+                btn_layout.addWidget(dis_btn)
+                btn_layout.addWidget(rem_btn)
+                self._table.setCellWidget(i, 6, btn_widget)
 
         summary = (
-            f"⚡ {len(apps)} startup apps detected  |  "
-            f"~{total_ram} MB RAM used at startup  |  "
-            f"{removable} apps can be disabled to free RAM and speed up boot"
+            f"⚡ {len(apps)} startup entries  |  "
+            f"~{total_ram} MB RAM at boot  |  "
+            f"{removable} can be disabled to speed up boot"
         )
         self._summary_lbl.setText(summary)
-        self._status_lbl.setText(f"✅ Loaded {len(apps)} startup apps")
+        self._status_lbl.setText(f"✅ Loaded {len(apps)} startup entries from all sources")
 
     def _reanalyze_with_ai(self):
         """Use Ollama to identify unknown startup apps."""
@@ -691,33 +814,50 @@ class StartupAppsPage(QWidget):
         worker.start()
         self._disable_workers.append(worker)
 
-    def _disable_app(self, app_name: str, row: int):
-        """Disable startup entry for this app."""
-        def _do():
-            return _disable_startup_app(app_name)
+    def _do_action(self, app: dict, row: int, remove: bool):
+        """Disable or remove a startup entry — source-aware."""
+        name = app.get("name", "")
+        action_fn = _remove_startup_app if remove else _disable_startup_app
+        verb = "Remove" if remove else "Disable"
 
-        def _update(success):
+        def _do():
+            return action_fn(app)
+
+        def _update(result):
+            success, msg = result
             if success:
-                self._status_lbl.setText(f"✅ Disabled: {app_name}. Restart to take effect.")
-                self._status_lbl.setStyleSheet("color: #00FF88; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
+                self._status_lbl.setText(f"✅ {verb}d: {msg}")
+                self._status_lbl.setStyleSheet(
+                    "color: #00FF88; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;"
+                )
+                # Grey out the entire row
                 for col in range(self._table.columnCount()):
                     item = self._table.item(row, col)
                     if item:
                         item.setForeground(QBrush(QColor("#4A6080")))
-                w = self._table.cellWidget(row, 4)
+                # Disable both action buttons
+                w = self._table.cellWidget(row, 6)
                 if w:
-                    btn = w.findChild(QPushButton)
-                    if btn:
+                    for btn in w.findChildren(QPushButton):
                         btn.setEnabled(False)
-                        btn.setText("Disabled")
+                        btn.setText(f"{'Removed' if remove else 'Disabled'}")
             else:
-                self._status_lbl.setText(f"⚠️ Could not disable {app_name} — may need admin rights.")
-                self._status_lbl.setStyleSheet("color: #FFB800; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
+                self._status_lbl.setText(f"⚠️ {verb} failed: {msg}")
+                self._status_lbl.setStyleSheet(
+                    "color: #FFB800; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;"
+                )
 
         worker = _FetchWorker(_do)
         worker.result_ready.connect(_update)
         worker.start()
-        self._disable_workers.append(worker)  # prevent GC
+        self._disable_workers.append(worker)
+
+    # Keep backward compat alias
+    def _disable_app(self, app_name: str, row: int):
+        for i, app in enumerate(self._apps):
+            if app.get("name") == app_name:
+                self._do_action(app, row, remove=False)
+                return
 
 
 # ─────────────────────────────────────────────────────────────────

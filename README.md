@@ -24,9 +24,12 @@ The **AI System Optimizer Assistant** is a free, privacy-first desktop app that:
 
 - 🤖 **Installs Ollama automatically** — no manual setup needed.
 - 🧹 **Cleans your PC safely** — 12+ cleanup tasks, never touches personal files.
+- 🌐 **Network & Internet Dashboard** — Real-time Mbps speed test + bandwidth hog tracking.
 - 🚀 **AI Startup Analysis** — Use local LLM to identify and explain mysterious background apps.
-- 📊 **Monitors system health** in real time — CPU, RAM, Disk gauges.
-- 🎙️ **Voice-Chat Integration** — Speak commands or type; same AI bubbles and progress.
+- 🗜️ **Smart Browser Optimization** — SQLite vacuuming to speed up browsers without deleting cache.
+- 📊 **Monitors system health** in real time — CPU, RAM, Disk, and Network metrics.
+- 🎙️ **Voice-Chat Integration** — Speak commands; redirects to AI Chat for visual analysis.
+- 🧠 **Data-Driven AI** — Assistant sees live metrics; no more generic "check your logs" advice.
 - 🔧 **Fix Ollama (Auto-Repair)** — One-click diagnostic and model puller in Settings.
 - 💤 **Auto-closes after 5 minutes idle** — frees RAM when you are not using it.
 - 🌐 **Works offline** after first setup.
@@ -279,7 +282,9 @@ Next startup → repeats
 | *"Health"* | Gives system health score |
 | *"Startup"* | Opens startup apps manager |
 | *"Help"* | Lists all available commands |
-| *Any other question* | Sent to the local AI assistant |
+| *"Internet Speed"* | Opens the dedicated network dashboard |
+| *"Boost Internet"* | Flushes DNS and resets network stack |
+| *Any other question* | Sent to the local AI assistant with live system context |
 
 ---
 
@@ -316,6 +321,21 @@ Next startup → repeats
 | Voice not working | Run: `pip install pipwin && pipwin install pyaudio` |
 | No internet on first run | Place `OllamaSetup.exe` in `installer/ollama/` folder |
 | App closes too quickly | Change idle time in Settings → Auto-close Minutes |
+
+---
+
+## 🤝 Contributing & Community
+
+We welcome contributions from the community! To contribute:
+1. **Clone & Work**: Fork or clone the repository to your local machine.
+2. **Main Branch**: All contributions should be targetted towards the `main` branch.
+3. **Submit Changes**: Send your updated code/PR. The owner will review and merge.
+4. **Attribution**: Contributors will be listed in the README and app metadata.
+
+### ⚠️ Rules for Contributors
+- **Ownership Integrity**: You are NOT allowed to modify or remove the original owner/author details (**Mohammad Quasif**).
+- **Quality**: Ensure code is thread-safe and respects the project's PyQt6 architecture.
+- **Privacy**: No external data collection or telemetry features allowed.
 
 ---
 
