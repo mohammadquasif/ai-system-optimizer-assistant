@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, NavButton] = {}
         self._current_page = "dashboard"
+        self._user_name = _get_system_username()  # MUST be set before _build_ui
 
         self._setup_tray()
         self._build_ui()

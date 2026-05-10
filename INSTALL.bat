@@ -2,22 +2,15 @@
 setlocal EnableDelayedExpansion
 
 :: ============================================================
-:: AI System Optimizer Assistant - Full Auto-Setup
+:: AI System Optimizer Assistant - Full Auto-Setup v1.1
 :: Author: Mohammad Quasif, DBA (AI) | B.Tech (CS)
-:: GitHub: https://github.com/mohammadquasif/ai-system-optimizer
+:: GitHub: https://github.com/mohammadquasif/ai-system-optimizer-assistant
 :: License: Personal Use Only (Non-Commercial)
 ::
-:: This script auto-installs everything needed:
-::   1. Checks Windows 10/11
-::   2. Checks Python - downloads and installs if missing
-::   3. Installs all Python packages
-::   4. Checks Ollama - downloads and installs if missing
-::   5. Checks AI model - skips download if already installed
-::   6. Creates desktop shortcut + Windows startup entry
-::   7. Launches the app
+:: STRICTLY uses qwen2.5:0.5b only - no larger models
 :: ============================================================
 
-title AI System Optimizer - Setup
+title AI System Optimizer - Setup v1.1
 color 0B
 cls
 
@@ -25,7 +18,7 @@ echo.
 echo  =======================================================
 echo    AI System Optimizer Assistant v1.0.0
 echo    by Mohammad Quasif (DBA AI, B.Tech CS)
-echo    github.com/mohammadquasif/ai-system-optimizer
+echo    github.com/mohammadquasif/ai-system-optimizer-assistant
 echo  =======================================================
 echo.
 echo  Starting automatic setup...
@@ -39,8 +32,40 @@ set "OLLAMA_URL=https://github.com/ollama/ollama/releases/latest/download/Ollama
 set "OLLAMA_INSTALLER=%TEMP_DIR%\OllamaSetup.exe"
 set "OFFLINE_OLLAMA=%SCRIPT_DIR%installer\ollama\OllamaSetup.exe"
 set "SHORTCUT=%USERPROFILE%\Desktop\AI System Optimizer.lnk"
+set "TARGET_MODEL=qwen2.5:0.5b"
+set "DB_PATH=%SCRIPT_DIR%config\app_data.db"
 
 if not exist "%TEMP_DIR%" mkdir "%TEMP_DIR%"
+
+:: ============================================================
+:: STEP 0 - RESET STALE SETTINGS (fixes "Checking..." bug)
+:: ============================================================
+echo [0/7] Resetting AI configuration to enforce 0.5b model...
+echo.
+
+:: Directly patch the SQLite DB to clear stale model settings
+python --version >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    python -c "
+import sqlite3, os
+db = r'%DB_PATH%'
+if os.path.exists(db):
+    conn = sqlite3.connect(db)
+    conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('ai_provider','ollama')\")
+    conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('ollama_model','qwen2.5:0.5b')\")
+    conn.execute(\"INSERT OR REPLACE INTO settings (key,value) VALUES ('first_run','false')\")
+    conn.commit()
+    conn.close()
+    print('  [OK] DB settings reset to 0.5b.')
+else:
+    print('  [INFO] DB not found - will be created on first run.')
+" 2>nul
+) else (
+    echo  [INFO] Python not found yet - DB will be configured after install.
+)
+
+echo.
+echo  -------------------------------------------------------
 
 :: ============================================================
 :: STEP 1 - PYTHON CHECK
@@ -94,7 +119,6 @@ if not exist "%PYTHON_INSTALLER%" (
 echo  Installing Python 3.13 (this takes about 1-2 minutes)...
 "%PYTHON_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_launcher=1
 
-:: Reload PATH so python command is found in this session
 for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v PATH 2^>nul') do set "UPATH=%%b"
 for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v PATH 2^>nul') do set "SPATH=%%b"
 set "PATH=!SPATH!;!UPATH!"
@@ -114,6 +138,7 @@ set "PYTHON_CMD=python"
 :step2
 echo.
 echo  -------------------------------------------------------
+
 :: ============================================================
 :: STEP 2 - PYTHON PACKAGES
 :: ============================================================
@@ -137,6 +162,7 @@ if exist "%SCRIPT_DIR%requirements.txt" (
 echo  [OK] Python packages installed.
 echo.
 echo  -------------------------------------------------------
+
 :: ============================================================
 :: STEP 3 - OLLAMA CHECK
 :: ============================================================
@@ -151,7 +177,6 @@ if %ERRORLEVEL% EQU 0 (
 
 echo  [!] Ollama not found.
 
-:: Check offline installer first
 if exist "%OFFLINE_OLLAMA%" (
     echo  Found offline installer. Installing Ollama...
     "%OFFLINE_OLLAMA%" /S
@@ -160,7 +185,6 @@ if exist "%OFFLINE_OLLAMA%" (
     goto :start_ollama_service
 )
 
-:: Check internet and download
 ping -n 1 8.8.8.8 >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo  [WARN] No internet. Ollama cannot be installed.
@@ -175,7 +199,7 @@ powershell -NoProfile -Command "Invoke-WebRequest -Uri '%OLLAMA_URL%' -OutFile '
 if exist "%OLLAMA_INSTALLER%" (
     echo  Installing Ollama silently...
     "%OLLAMA_INSTALLER%" /S
-    timeout /t 6 /nobreak >nul
+    timeout /t 8 /nobreak >nul
     if not exist "%SCRIPT_DIR%installer\ollama\" mkdir "%SCRIPT_DIR%installer\ollama\"
     copy "%OLLAMA_INSTALLER%" "%OFFLINE_OLLAMA%" >nul 2>&1
     echo  [OK] Ollama installed.
@@ -186,11 +210,11 @@ goto :step4
 
 :start_ollama_service
 echo  Checking if Ollama service is running...
-curl -s http://localhost:11434/api/tags >nul 2>&1
+curl -s --max-time 3 http://localhost:11434/api/tags >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo  Starting Ollama service in background...
     start "" /B ollama serve
-    timeout /t 4 /nobreak >nul
+    timeout /t 5 /nobreak >nul
     echo  [OK] Ollama service started.
 ) else (
     echo  [OK] Ollama service is already running.
@@ -199,14 +223,14 @@ if %ERRORLEVEL% NEQ 0 (
 :step4
 echo.
 echo  -------------------------------------------------------
+
 :: ============================================================
-:: STEP 4 - AI MODEL CHECK (skip if already installed)
+:: STEP 4 - AI MODEL: ONLY qwen2.5:0.5b
 :: ============================================================
-echo [4/7] Checking AI model...
+echo [4/7] Checking AI model (target: %TARGET_MODEL% only)...
 echo.
 
 set "MODEL_FOUND=0"
-set "FOUND_MODEL=none"
 
 ollama --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
@@ -214,72 +238,67 @@ if %ERRORLEVEL% NEQ 0 (
     goto :step5
 )
 
-:: Check each preferred model (smallest first)
-ollama list 2>nul | findstr /i "qwen2.5:0.5b" >nul 2>&1
+:: Check STRICTLY for 0.5b only
+ollama list 2>nul | findstr /i "qwen2.5:0.5" >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     set "MODEL_FOUND=1"
-    set "FOUND_MODEL=qwen2.5:0.5b"
-    goto :model_result
+    echo  [OK] qwen2.5:0.5b is already installed. No download needed.
+    goto :step5
 )
 
-ollama list 2>nul | findstr /i "qwen2.5:1b" >nul 2>&1
+:: Not found - pull it
+echo  [INFO] qwen2.5:0.5b not installed.
+echo.
+
+:: Check if Ollama API is reachable before pulling
+curl -s --max-time 3 http://localhost:11434/api/tags >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo  [WARN] Ollama service not responding.
+    echo         The app will pull qwen2.5:0.5b automatically on first launch.
+    goto :step5
+)
+
+ping -n 1 8.8.8.8 >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo  [WARN] No internet. App will pull model when connected.
+    goto :step5
+)
+
+echo  Downloading qwen2.5:0.5b (~400 MB). Please wait...
+echo  Note: This is a one-time download. The model is stored locally.
+echo.
+ollama pull qwen2.5:0.5b
 if %ERRORLEVEL% EQU 0 (
-    set "MODEL_FOUND=1"
-    set "FOUND_MODEL=qwen2.5:1b"
-    goto :model_result
-)
-
-ollama list 2>nul | findstr /i "llama3.2:1b" >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    set "MODEL_FOUND=1"
-    set "FOUND_MODEL=llama3.2:1b"
-    goto :model_result
-)
-
-ollama list 2>nul | findstr /i "qwen2.5:1.5b" >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    set "MODEL_FOUND=1"
-    set "FOUND_MODEL=qwen2.5:1.5b"
-    goto :model_result
-)
-
-:: Also accept any qwen or llama model
-ollama list 2>nul | findstr /i "qwen llama phi gemma tinyllama" >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    set "MODEL_FOUND=1"
-    set "FOUND_MODEL=existing model"
-    goto :model_result
-)
-
-:model_result
-if "!MODEL_FOUND!"=="1" (
-    echo  [OK] Found model: !FOUND_MODEL!
-    echo       Skipping download - will use existing model.
+    echo  [OK] qwen2.5:0.5b downloaded and ready.
 ) else (
-    echo  [INFO] No AI model installed yet.
-    echo         App will download qwen2.5:0.5b on first launch.
-    echo         Size: ~400 MB. Internet required.
+    echo  [WARN] Model download failed. App will retry on first launch.
 )
 
 :step5
 echo.
 echo  -------------------------------------------------------
+
 :: ============================================================
 :: STEP 5 - DESKTOP SHORTCUT
 :: ============================================================
 echo [5/7] Creating desktop shortcut...
 echo.
 
-powershell -NoProfile -Command "& { $ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT%'); $s.TargetPath = 'pythonw'; $s.Arguments = '\"%SCRIPT_DIR%app.py\"'; $s.WorkingDirectory = '%SCRIPT_DIR%'; $s.Description = 'AI System Optimizer by Mohammad Quasif'; $s.Save() }" 2>nul
+:: Find icon file
+set "ICON_PATH=%SCRIPT_DIR%assets\icon.ico"
+if not exist "%ICON_PATH%" set "ICON_PATH=%SCRIPT_DIR%assets\icon.png"
+
+powershell -NoProfile -Command "& { $ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT%'); $s.TargetPath = 'pythonw'; $s.Arguments = '\"%SCRIPT_DIR%app.py\"'; $s.WorkingDirectory = '%SCRIPT_DIR%'; $s.Description = 'AI System Optimizer by Mohammad Quasif'; if (Test-Path '%ICON_PATH%') { $s.IconLocation = '%ICON_PATH%' }; $s.Save() }" 2>nul
 
 if exist "%SHORTCUT%" (
-    echo  [OK] Desktop shortcut created.
+    echo  [OK] Desktop shortcut created with custom icon.
 ) else (
     echo  [WARN] Could not create shortcut. Run app.py manually.
 )
 
 echo.
 echo  -------------------------------------------------------
+
 :: ============================================================
 :: STEP 6 - WINDOWS STARTUP ENTRY
 :: ============================================================
@@ -297,27 +316,44 @@ if %ERRORLEVEL% EQU 0 (
 
 echo.
 echo  -------------------------------------------------------
+
 :: ============================================================
-:: STEP 7 - LAUNCH
+:: STEP 7 - DB SETTINGS RESET (enforce 0.5b after package install)
 :: ============================================================
-echo [7/7] Launching AI System Optimizer...
+echo [7/7] Finalizing AI configuration...
 echo.
 
+%PYTHON_CMD% -c "
+import sqlite3, os, sys
+sys.path.insert(0, r'%SCRIPT_DIR%')
+try:
+    from config.settings import init_db, set_setting, DB_PATH
+    init_db()
+    set_setting('ai_provider', 'ollama')
+    set_setting('ollama_model', 'qwen2.5:0.5b')
+    set_setting('first_run', 'false')
+    print('  [OK] AI settings locked to qwen2.5:0.5b')
+except Exception as e:
+    print(f'  [WARN] Could not update DB: {e}')
+" 2>&1
+
+echo.
 echo  =========================================================
 echo    Setup Complete!
 echo.
-echo    What happens next:
-echo    - A splash screen will appear
-echo    - The app checks if AI setup is needed
-echo    - You will hear a voice greeting
-echo    - App auto-closes after 5 min idle (frees RAM)
-echo    - Double-click desktop icon to relaunch anytime
+echo    Configuration:
+echo    - AI Model: qwen2.5:0.5b (ultra-fast, low RAM)
+echo    - Taskbar icon: custom speed optimizer icon
+echo    - Auto-start: enabled on Windows startup
+echo.
+echo    Launching AI System Optimizer now...
 echo  =========================================================
 echo.
 
 start "" pythonw "%SCRIPT_DIR%app.py"
 
-echo  App launched successfully!
+timeout /t 2 /nobreak >nul
+echo  App launched!
 echo.
 echo  Press any key to close this window...
 pause >nul
