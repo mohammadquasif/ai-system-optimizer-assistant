@@ -110,24 +110,19 @@ class BrowserOptimizePage(QWidget):
             "clean_cookies": False,
         }
 
-        # Thread-safe: post to main thread via QTimer
+        # BackgroundCleanup now uses QThread+signals — callbacks run on main thread
         def progress_cb(msg, pct):
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda m=msg, p=pct: (
-                self._status_lbl.setText(m),
-                self._progress.setValue(p),
-                self._log.append(f"  → {m}"),
-            ))
+            self._status_lbl.setText(msg)
+            self._progress.setValue(pct)
+            self._log.append(f"  → {msg}")
 
         def done_cb(result):
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda r=result: (
-                self._opt_btn.setEnabled(True),
-                self._log.append(f"\n✅ {r.summary()}"),
-            ))
+            self._opt_btn.setEnabled(True)
+            self._log.append(f"\n✅ {result.summary()}")
 
         bg = BackgroundCleanup(options, progress_cb=progress_cb, done_cb=done_cb)
         bg.start()
+
 
 
     def _lbl(self, text, color="#8BA3C7", size=12, bold=False):

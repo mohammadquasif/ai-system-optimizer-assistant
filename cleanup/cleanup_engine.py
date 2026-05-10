@@ -477,24 +477,65 @@ def estimate_cleanup_size(
 
 
 # ─────────────────────────────────────────────────────────────────
-# BACKGROUND RUNNER
+# BACKGROUND RUNNER — QThread + pyqtSignal (guaranteed thread-safe)
 # ─────────────────────────────────────────────────────────────────
 
-class BackgroundCleanup:
-    """Run cleanup in a background thread."""
+try:
+    from PyQt6.QtCore import QThread, pyqtSignal as Signal
+    _HAS_QT = True
+except ImportError:
+    _HAS_QT = False
 
-    def __init__(self, options: dict, progress_cb=None, done_cb=None):
-        self.options     = options
-        self.progress_cb = progress_cb
-        self.done_cb     = done_cb
-        self._thread: Optional[threading.Thread] = None
 
-    def start(self):
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+if _HAS_QT:
+    class BackgroundCleanup(QThread):
+        """
+        Runs CleanupEngine in a QThread.
+        progress_cb and done_cb are connected via Qt signals —
+        guaranteed to be delivered on the main thread even when
+        emitted from the worker thread.
+        """
+        _progress_sig = Signal(str, int)
+        _done_sig     = Signal(object)
 
-    def _run(self):
-        engine = CleanupEngine(progress_cb=self.progress_cb)
-        result = engine.run(**self.options)
-        if self.done_cb:
-            self.done_cb(result)
+        def __init__(self, options: dict, progress_cb=None, done_cb=None):
+            super().__init__()
+            self.options = options
+            if progress_cb:
+                self._progress_sig.connect(progress_cb)
+            if done_cb:
+                self._done_sig.connect(done_cb)
+
+        def start(self):
+            super().start()
+
+        def run(self):
+            engine = CleanupEngine(
+                progress_cb=lambda m, p: self._progress_sig.emit(m, p)
+            )
+            # Only pass keys the engine knows about
+            known = {
+                'clean_temp','clean_browser_cache','clean_thumbnails',
+                'clean_logs','clean_gpu_cache','clean_dns','clean_wer',
+                'clean_clipboard','clean_recent_links','trim_ram',
+                'clean_prefetch','clean_recycle','clean_event_logs',
+                'clean_windows_update','clean_history','clean_cookies',
+            }
+            filtered = {k: v for k, v in self.options.items() if k in known}
+            result = engine.run(**filtered)
+            self._done_sig.emit(result)
+else:
+    class BackgroundCleanup:
+        """Fallback when PyQt6 unavailable."""
+        def __init__(self, options, progress_cb=None, done_cb=None):
+            self.options     = options
+            self.progress_cb = progress_cb or (lambda m, p: None)
+            self.done_cb     = done_cb
+        def start(self):
+            import threading
+            threading.Thread(target=self._run, daemon=True).start()
+        def _run(self):
+            engine = CleanupEngine(progress_cb=self.progress_cb)
+            result = engine.run(**self.options)
+            if self.done_cb:
+                self.done_cb(result)
