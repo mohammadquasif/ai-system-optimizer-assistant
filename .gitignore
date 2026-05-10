@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Installer files (avoid committing large binaries)
+installer/ollama/*.exe
+*.exe
+*.msi
+
+# Logs & Config
+logs/*.log
+config/*.db
+config/*.enc
+config/*.key
+
+# OS
+.DS_Store
+Thumbs.db
