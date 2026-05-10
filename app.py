@@ -179,44 +179,48 @@ def main():
     # This runs silently in background so AI is ready by the time user clicks AI tab
     def _ensure_ollama():
         try:
-            from ai.ollama_manager import OllamaManager, PREFERRED_MODELS
-            # If already running, just configure settings
-            if OllamaManager.is_api_running():
+            from ai.ollama_manager import OllamaManager, TARGET_MODEL
+            TARGET = TARGET_MODEL  # "qwen2.5:0.5b"
+
+            def _configure_with_target():
+                """Check if 0.5b is installed; pull if missing."""
                 installed = OllamaManager.list_installed_models()
-                if installed:
-                    # Pick smallest preferred model or first installed
-                    chosen = next(
-                        (p for p in PREFERRED_MODELS if any(
-                            m.startswith(p.split(":")[0]) for m in installed
-                        )),
-                        installed[0]
-                    )
-                    set_setting("ai_provider", "ollama")
-                    set_setting("ollama_model", chosen)
-                    app_logger.info(f"[Ollama] Already running, using: {chosen}")
-                    return
-            # Not running — start it
+                already_have = any(
+                    m.startswith("qwen2.5:0.5") or m == TARGET for m in installed
+                )
+                if not already_have:
+                    app_logger.info(f"[Ollama] Pulling {TARGET}...")
+                    import requests, json
+                    try:
+                        with requests.post(
+                            "http://localhost:11434/api/pull",
+                            json={"name": TARGET}, stream=True, timeout=600
+                        ) as resp:
+                            for line in resp.iter_lines():
+                                if line:
+                                    d = json.loads(line)
+                                    if d.get("status") == "success":
+                                        break
+                    except Exception as pe:
+                        app_logger.warning(f"[Ollama] Pull failed: {pe}")
+                set_setting("ai_provider", "ollama")
+                set_setting("ollama_model", TARGET)
+                app_logger.info(f"[Ollama] Configured: {TARGET}")
+
+            if OllamaManager.is_api_running():
+                _configure_with_target()
+                return
+
             if OllamaManager.is_installed():
                 app_logger.info("[Ollama] Starting service...")
                 OllamaManager._start_service()
-                # Wait up to 15s for it to come up
-                for _ in range(10):
-                    time.sleep(1.5)
+                for _ in range(15):
+                    _time.sleep(1.5)
                     if OllamaManager.is_api_running():
-                        installed = OllamaManager.list_installed_models()
-                        if installed:
-                            chosen = next(
-                                (p for p in PREFERRED_MODELS if any(
-                                    m.startswith(p.split(":")[0]) for m in installed
-                                )),
-                                installed[0]
-                            )
-                            set_setting("ai_provider", "ollama")
-                            set_setting("ollama_model", chosen)
-                            app_logger.info(f"[Ollama] Started, using model: {chosen}")
+                        _configure_with_target()
                         break
             else:
-                app_logger.warning("[Ollama] Not installed — skipping auto-start.")
+                app_logger.warning("[Ollama] Not installed.")
         except Exception as e:
             app_logger.error(f"[Ollama] Auto-start error: {e}")
 

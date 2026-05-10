@@ -32,44 +32,22 @@ logger = logging.getLogger(__name__)
 OLLAMA_API_BASE      = "http://localhost:11434"
 OLLAMA_WIN_INSTALLER = "https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe"
 
-# Preferred models — smallest first (max 1.5b)
-# These are the models we PREFER to use or install
+# The ONE model we use — ultra-small, suitable for all systems with 2+ GB RAM
+TARGET_MODEL = "qwen2.5:0.5b"  # Strictly enforce 0.5b ONLY
+
+# Keep list for compatibility but strictly order 0.5b first and only download it
 PREFERRED_MODELS = [
     "qwen2.5:0.5b",
-    "qwen2.5:1b",
-    "llama3.2:1b",
-    "qwen2.5:1.5b",
 ]
 
-# Full model priority list with metadata
+# Full model priority list — 0.5b only
 MODEL_PRIORITY = [
     {
         "name": "qwen2.5:0.5b",
-        "min_ram_gb": 2,
+        "min_ram_gb": 1,
         "requires_gpu": False,
         "size_gb": 0.4,
-        "description": "Ultra-fast 0.5B — lowest RAM usage (recommended for all systems)",
-    },
-    {
-        "name": "qwen2.5:1b",
-        "min_ram_gb": 2,
-        "requires_gpu": False,
-        "size_gb": 0.8,
-        "description": "Qwen2.5 1B — best balance of speed and quality",
-    },
-    {
-        "name": "llama3.2:1b",
-        "min_ram_gb": 2,
-        "requires_gpu": False,
-        "size_gb": 0.9,
-        "description": "Llama 3.2 1B — excellent quality at 1B",
-    },
-    {
-        "name": "qwen2.5:1.5b",
-        "min_ram_gb": 3,
-        "requires_gpu": False,
-        "size_gb": 1.0,
-        "description": "Qwen2.5 1.5B — maximum quality within 1.5B limit",
+        "description": "Ultra-fast 0.5B — minimum RAM, best for this optimizer app",
     },
 ]
 
@@ -117,42 +95,10 @@ class SystemProfile:
 
     def select_best_model(self) -> dict:
         """
-        SMART SELECTION:
-        1. Check what's already installed → use that if it's in our preferred list
-        2. If nothing installed → select best to download (smallest that fits RAM)
+        STRICT: Always use qwen2.5:0.5b.
+        Pull it if not installed. Never use a larger model.
         """
-        # First: check installed models
-        try:
-            installed = OllamaManager.list_installed_models()
-            if installed:
-                # Check if any PREFERRED model is already installed
-                for preferred in PREFERRED_MODELS:
-                    for inst in installed:
-                        if inst.startswith(preferred.split(":")[0]) or inst == preferred:
-                            # Found a match — use it
-                            meta = next((m for m in MODEL_PRIORITY if m["name"] == preferred), None)
-                            if meta:
-                                logger.info(f"Using already-installed model: {inst}")
-                                return meta
-                # No preferred model installed but something else is — use first installed
-                # if it's reasonably small (not a huge model)
-                first = installed[0]
-                logger.info(f"Using existing installed model: {first}")
-                return {
-                    "name": first,
-                    "min_ram_gb": 2,
-                    "requires_gpu": False,
-                    "size_gb": 1.0,
-                    "description": f"Existing installed model: {first}",
-                }
-        except Exception:
-            pass
-
-        # Nothing installed — pick smallest that fits RAM
-        for model in MODEL_PRIORITY:
-            if self.ram_free_gb >= model["min_ram_gb"]:
-                return model
-        return MODEL_PRIORITY[0]
+        return MODEL_PRIORITY[0]  # Always 0.5b
 
     def summary(self) -> str:
         return (
