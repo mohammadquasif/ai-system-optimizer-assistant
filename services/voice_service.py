@@ -1,6 +1,8 @@
 """
 Voice Assistant Service - pyttsx3 (TTS) + SpeechRecognition (STT)
 Runs in a dedicated background thread to avoid blocking the UI.
+
+VoiceCommandHandler: full command interpreter with navigation callbacks.
 """
 
 import threading
@@ -53,7 +55,6 @@ class VoiceAssistant:
         if not self._enabled:
             return
         if priority:
-            # Clear queue and prioritize
             while not self._tts_queue.empty():
                 try:
                     self._tts_queue.get_nowait()
@@ -62,16 +63,15 @@ class VoiceAssistant:
         self._tts_queue.put(text)
         logger.debug(f"TTS queued: {text[:60]}")
 
-    def greet(self, name: str = "Quasif"):
+    def greet(self, name: str = "there"):
         """Speak a context-aware startup greeting."""
         hour = datetime.now().hour
-        if hour < 12:
-            period = "Morning"
-        elif hour < 17:
-            period = "Afternoon"
-        else:
-            period = "Evening"
-        self.speak(f"Good {period} {name}. Your AI System Optimizer is ready. System monitoring is active.", priority=True)
+        period = "Morning" if hour < 12 else "Afternoon" if hour < 17 else "Evening"
+        self.speak(
+            f"Good {period} {name}. Your AI System Optimizer is ready. "
+            "System monitoring is active.",
+            priority=True,
+        )
 
     def start_listening(self, callback: Optional[Callable[[str], None]] = None):
         """Start STT listening in background thread."""
@@ -97,16 +97,13 @@ class VoiceAssistant:
         try:
             import pyttsx3
             engine = pyttsx3.init()
-            # Configure voice
             voices = engine.getProperty("voices")
-            preferred_voice = get_setting("voice_name", "default")
             if voices:
-                # Try to find an English voice
                 for v in voices:
                     if "english" in v.name.lower() or "en" in v.id.lower():
                         engine.setProperty("voice", v.id)
                         break
-            engine.setProperty("rate", 175)   # Speed
+            engine.setProperty("rate", 175)
             engine.setProperty("volume", 0.9)
             return engine
         except Exception as e:
@@ -135,7 +132,7 @@ class VoiceAssistant:
                 time.sleep(0.5)
 
     def _stt_loop(self, callback: Optional[Callable[[str], None]]):
-        """STT listener loop — handles missing pyaudio/microphone gracefully."""
+        """STT listener loop."""
         try:
             import speech_recognition as sr
         except ImportError:
@@ -144,9 +141,9 @@ class VoiceAssistant:
             return
 
         try:
-            import pyaudio  # noqa — just test if it's available
+            import pyaudio  # noqa
         except ImportError:
-            logger.warning("PyAudio not installed. STT disabled. Run: pip install pipwin && pipwin install pyaudio")
+            logger.warning("PyAudio not installed. STT disabled.")
             self._listening = False
             return
 
@@ -156,7 +153,7 @@ class VoiceAssistant:
             recognizer.dynamic_energy_threshold = True
 
             with sr.Microphone() as source:
-                logger.info("[STT] Calibrating ambient noise (1s)...")
+                logger.info("[STT] Calibrating ambient noise...")
                 try:
                     recognizer.adjust_for_ambient_noise(source, duration=1)
                 except Exception:
@@ -171,7 +168,6 @@ class VoiceAssistant:
                         except sr.UnknownValueError:
                             continue
                         except sr.RequestError:
-                            # Offline fallback — try sphinx if available
                             try:
                                 text = recognizer.recognize_sphinx(audio)
                             except Exception:
@@ -192,48 +188,150 @@ class VoiceAssistant:
             self._listening = False
 
 
+# ─────────────────────────────────────────────────────────────────
+# COMMAND INTERPRETER
+# ─────────────────────────────────────────────────────────────────
+
 class VoiceCommandHandler:
     """
-    Maps voice commands to application actions with conversational AI responses.
-    Responds naturally: "Sure Quasif, cleaning your system now!"
+    Full command interpreter for both voice AND typed chat commands.
+
+    When user says/types:
+      "cleanup my system"   → speaks "Sure {name}…" → navigates to Cleanup → runs it → speaks done
+      "browser cleanup"     → navigates to Browser → runs optimization
+      "how is my system"    → speaks live stats
+      "help / what can you" → lists commands
+      confused input        → asks for clarification with options
     """
 
     def __init__(self, voice: VoiceAssistant, actions: dict, user_name: str = ""):
         self.voice = voice
-        self.actions = actions
         self.user_name = user_name or "there"
+        # actions dict (all optional):
+        #   navigate(page_key)          - switch to a page
+        #   cleanup()                   - run system cleanup
+        #   browser_cleanup()           - run browser optimization
+        #   status()                    - speak system status
+        #   minimize()                  - minimize window
+        #   ai_chat(text)               - send text to AI chat
+        self.actions = actions
+
+    # Public entry points (used by voice STT and chat input)
 
     def handle(self, text: str):
+        """Process a command from voice recognition or chat input."""
         t = text.lower().strip()
-        logger.info(f"[VoiceCmd] '{t}'")
+        logger.info(f"[Cmd] '{t}'")
         name = self.user_name
 
-        if any(kw in t for kw in ["clean", "cleanup", "optimize", "speed up", "boost"]):
-            self.voice.speak(f"Sure {name}! Running a full system cleanup for you right now.")
-            if "cleanup" in self.actions:
-                self.actions["cleanup"]()
+        # ── CLEANUP ───────────────────────────────────────────────
+        if any(kw in t for kw in [
+            "clean my system", "cleanup my system", "clean the system",
+            "system cleanup", "optimize my pc", "speed up my pc",
+            "clean up pc", "clean pc", "run cleanup", "quick clean",
+        ]):
+            self.voice.speak(f"Sure {name}! Let me start cleaning your system right now.")
+            self._do("navigate", "cleanup")
+            # Small delay so navigation completes before running
+            threading.Timer(0.8, lambda: self._do("cleanup")).start()
+            return
 
-        elif any(kw in t for kw in ["status", "health", "how is my", "system performance"]):
-            if "status" in self.actions:
-                self.actions["status"]()  # Will speak status inside
+        # ── BROWSER CLEANUP ───────────────────────────────────────
+        if any(kw in t for kw in [
+            "browser", "browser cache", "clean browser", "browser cleanup",
+            "clear browser", "chrome", "edge cache", "firefox cache",
+        ]):
+            self.voice.speak(f"Sure {name}! Opening browser cleanup for you.")
+            self._do("navigate", "browser")
+            threading.Timer(0.8, lambda: self._do("browser_cleanup")).start()
+            return
 
-        elif any(kw in t for kw in ["stop", "exit", "quit", "close", "minimize", "goodbye"]):
-            self.voice.speak(f"Goodbye {name}! I'll minimize to the system tray. Call me anytime.")
-            if "minimize" in self.actions:
-                self.actions["minimize"]()
+        # ── STATUS / HEALTH ───────────────────────────────────────
+        if any(kw in t for kw in [
+            "status", "health", "how is my system", "how is my pc",
+            "system performance", "ram usage", "cpu usage",
+            "how are you", "check my system",
+        ]):
+            self._do("status")
+            return
 
-        elif any(kw in t for kw in ["help", "what can you do", "commands"]):
+        # ── PERFORMANCE PAGE ──────────────────────────────────────
+        if any(kw in t for kw in ["performance", "tips", "performance tips", "startup apps"]):
+            self.voice.speak(f"Opening performance page, {name}.")
+            self._do("navigate", "performance")
+            return
+
+        # ── DASHBOARD ─────────────────────────────────────────────
+        if any(kw in t for kw in ["dashboard", "home", "overview", "main"]):
+            self.voice.speak(f"Taking you to the dashboard, {name}.")
+            self._do("navigate", "dashboard")
+            return
+
+        # ── AI CHAT ───────────────────────────────────────────────
+        if any(kw in t for kw in ["chat", "ask ai", "open ai", "ai assistant"]):
+            self.voice.speak(f"Opening AI assistant, {name}. Ask me anything!")
+            self._do("navigate", "ai_chat")
+            return
+
+        # ── MINIMIZE / CLOSE ──────────────────────────────────────
+        if any(kw in t for kw in ["minimize", "hide", "close", "goodbye", "bye", "exit"]):
+            self.voice.speak(f"Minimizing for you, {name}. I'll be here when you need me.")
+            self._do("minimize")
+            return
+
+        # ── GREETINGS ─────────────────────────────────────────────
+        if any(kw in t for kw in ["hello", "hi", "hey", "good morning", "good evening"]):
             self.voice.speak(
-                f"Sure {name}! You can say: clean my system, check status, "
-                "minimize, or ask me any question about your PC."
+                f"Hello {name}! I'm here and your system is being monitored. "
+                "Say 'clean my system', 'browser cleanup', or 'check status' to get started."
             )
+            return
 
-        elif any(kw in t for kw in ["hello", "hi", "hey", "good morning", "good evening"]):
-            self.voice.speak(f"Hello {name}! I'm here and your system is being monitored. How can I help?")
+        # ── HELP ─────────────────────────────────────────────────
+        if any(kw in t for kw in ["help", "what can you do", "commands", "what to say"]):
+            self.voice.speak(
+                f"Sure {name}! Here's what I can do. "
+                "Say: clean my system, browser cleanup, check status, "
+                "performance tips, open dashboard, or minimize."
+            )
+            return
 
-        else:
-            # Pass to AI for conversational response
-            self.voice.speak(f"Let me check that for you, {name}.")
-            if "ai_chat" in self.actions:
-                self.actions["ai_chat"](text)
+        # ── CONFUSED — ask for clarification ─────────────────────
+        self.voice.speak(
+            f"I'm not sure what you meant, {name}. "
+            "Did you want me to clean your system, clean the browser, "
+            "or check your system status? Please say one of these options."
+        )
 
+    def handle_chat(self, text: str, speak_response: bool = True):
+        """
+        Process command from the AI chat box.
+        If it maps to a direct action, execute it.
+        Otherwise pass to AI for a conversational response.
+        Returns True if command was handled locally, False if should go to AI.
+        """
+        t = text.lower().strip()
+
+        # Check if any known command matches
+        local_commands = [
+            (["clean", "cleanup", "optimize", "speed up"], None),
+            (["browser", "chrome", "edge", "firefox"], None),
+            (["status", "health", "how is my system", "how is my pc"], None),
+            (["help", "commands", "what can you"], None),
+            (["minimize", "hide", "close", "exit"], None),
+        ]
+        for keywords, _ in local_commands:
+            if any(kw in t for kw in keywords):
+                self.handle(text)
+                return True
+        return False
+
+    # ── Internal helper ──────────────────────────────────────────
+
+    def _do(self, action: str, *args):
+        """Safely call an action from actions dict."""
+        try:
+            if action in self.actions and self.actions[action]:
+                self.actions[action](*args)
+        except Exception as e:
+            logger.error(f"[Cmd] action '{action}' failed: {e}")

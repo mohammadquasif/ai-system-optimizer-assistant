@@ -128,12 +128,23 @@ class NavButton(QPushButton):
 # ────────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self._user_name = _get_system_username()
-        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(1100, 700)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"AI System Optimizer Assistant v{APP_VERSION}")
+        self.setMinimumSize(1100, 720)
         self.resize(1280, 800)
+
+        # App icon
+        import os
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            try:
+                from PyQt6.QtWidgets import QApplication
+                QApplication.instance().setWindowIcon(QIcon(icon_path))
+            except Exception:
+                pass
+
         self.setStyleSheet(STYLESHEET)
 
         self._monitor = SystemMonitor(interval=2.0)
@@ -359,17 +370,40 @@ class MainWindow(QMainWindow):
             self._voice.start()
             QTimer.singleShot(2000, lambda: self._voice.greet(self._user_name))
 
-        # Setup voice command handler with username for conversational responses
+        # Setup voice command handler with full navigation + action wiring
+        def _navigate_and(page: str, action_fn=None):
+            """Navigate to page on main thread then optionally run action."""
+            QTimer.singleShot(0, lambda: self._navigate(page))
+            if action_fn:
+                QTimer.singleShot(900, action_fn)
+
+        def _speak_status():
+            try:
+                m = self._monitor.latest
+                self._voice.speak(
+                    f"{self._user_name}, your system health is {m.health_score} percent. "
+                    f"CPU is at {m.cpu_percent:.0f} percent. "
+                    f"RAM is at {m.ram_percent:.0f} percent. "
+                    f"Disk is at {m.disk_percent:.0f} percent."
+                )
+            except Exception:
+                self._voice.speak("Could not read system stats right now.")
+
         self._voice_handler = VoiceCommandHandler(self._voice, {
-            "cleanup":  lambda: self._pages["cleanup"].run_quick_cleanup(),
-            "minimize": self.hide,
-            "ai_chat":  lambda text: self._pages["ai_chat"].send_message_external(text),
-            "status":   lambda: self._voice.speak(
-                f"System health is {self._monitor.latest.health_score} percent. "
-                f"CPU at {self._monitor.latest.cpu_percent:.0f} percent. "
-                f"RAM at {self._monitor.latest.ram_percent:.0f} percent."
+            "navigate":        lambda page: QTimer.singleShot(0, lambda p=page: self._navigate(p)),
+            "cleanup":         lambda: QTimer.singleShot(0, self._pages["cleanup"].run_quick_cleanup),
+            "browser_cleanup": lambda: QTimer.singleShot(0,
+                getattr(self._pages["browser"], "_run_optimization", lambda: None)
             ),
+            "minimize":        lambda: QTimer.singleShot(0, self.hide),
+            "ai_chat":         lambda text: QTimer.singleShot(0,
+                lambda t=text: self._pages["ai_chat"].send_message_external(t)
+            ),
+            "status":          _speak_status,
         }, user_name=self._user_name)
+
+        # Inject command handler into AI chat page for local command interception
+        self._pages["ai_chat"].set_command_handler(self._voice_handler)
 
 
     @pyqtSlot(object)

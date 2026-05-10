@@ -359,10 +359,22 @@ class PerformancePage(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         for level, msg, color in tips:
-            row = QWidget()
-            row.setStyleSheet(f"background: {color}15; border: 1px solid {color}30; border-radius: 6px;")
+            # Outer wrapper so it doesn't stretch full width
+            outer = QWidget()
+            outer.setStyleSheet("background: transparent;")
+            outer_l = QHBoxLayout(outer)
+            outer_l.setContentsMargins(0, 0, 0, 0)
+
+            row = QFrame()
+            row.setStyleSheet(
+                f"background: {color}18; "
+                f"border: 1px solid {color}50; "
+                "border-radius: 6px; "
+                "padding: 4px;"
+            )
+            row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             r_layout = QHBoxLayout(row)
-            r_layout.setContentsMargins(10, 6, 10, 6)
+            r_layout.setContentsMargins(10, 5, 10, 5)
             r_layout.setSpacing(10)
             lvl_lbl = QLabel(level)
             lvl_lbl.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 700; font-family: 'Segoe UI';")

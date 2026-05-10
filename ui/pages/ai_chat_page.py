@@ -105,11 +105,16 @@ class ChatBubble(QFrame):
 class AIChatPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._chat_history: list = []  # [{role, content}]
+        self._chat_history: list = []
         self._current_bubble: ChatBubble = None
         self._worker_thread: QThread = None
+        self._cmd_handler = None   # injected by MainWindow after init
         self._setup_ui()
         self._load_history()
+
+    def set_command_handler(self, handler):
+        """Allow MainWindow to inject VoiceCommandHandler for local command routing."""
+        self._cmd_handler = handler
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -276,6 +281,20 @@ class AIChatPage(QWidget):
         if not text:
             return
 
+        # ── LOCAL COMMAND INTERCEPTION ────────────────────────────
+        # Check if message maps to a direct app action before going to AI
+        if self._cmd_handler:
+            handled = self._cmd_handler.handle_chat(text, speak_response=False)
+            if handled:
+                # Show user message in chat and a brief system response
+                self._input.clear()
+                self._add_bubble(text, "user")
+                action_reply = self._local_action_reply(text)
+                reply_bubble = self._add_bubble(action_reply, "assistant")
+                # Also speak the response
+                self._cmd_handler.voice.speak(action_reply)
+                return
+
         service = AIService.get_instance()
         if not service.is_configured:
             self._add_system_message(
@@ -328,8 +347,28 @@ class AIChatPage(QWidget):
         self._input.setEnabled(True)
         self._send_btn.setEnabled(True)
         self._input.setFocus()
-        self._worker_thread.quit()
-        self._worker_thread.wait()
+        if self._worker_thread:
+            self._worker_thread.quit()
+            self._worker_thread.wait()
+        # Speak the AI response via TTS if handler available
+        if self._cmd_handler and full_text:
+            snippet = full_text[:200].replace("\n", " ")
+            self._cmd_handler.voice.speak(snippet)
+
+    def _local_action_reply(self, text: str) -> str:
+        """Return a friendly spoken+displayed reply for locally handled commands."""
+        name = self._cmd_handler.user_name if self._cmd_handler else "there"
+        t = text.lower()
+        if any(k in t for k in ["clean", "cleanup", "optimize"]):
+            return f"Sure {name}! Let me clean your system right now. Check the Cleanup tab for live logs."
+        if any(k in t for k in ["browser"]):
+            return f"Sure {name}! Opening browser cleanup now. This will clear cache safely."
+        if any(k in t for k in ["status", "health", "how is my"]):
+            return f"Checking your system status, {name}. I'll report back shortly."
+        if any(k in t for k in ["help", "commands"]):
+            return (f"Here's what I can do, {name}: say 'clean my system', "
+                    "'browser cleanup', 'check status', 'performance tips', or ask me anything!")
+        return f"Sure {name}, let me take care of that for you!"
 
     def _on_error(self, error: str):
         if self._current_bubble:
