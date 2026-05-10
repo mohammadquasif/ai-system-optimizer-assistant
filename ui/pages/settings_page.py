@@ -296,6 +296,8 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout(w)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
+
+        # About card
         card = GlassCard(accent_color="#8BA3C7")
         cl = QVBoxLayout(card)
         cl.setContentsMargins(20, 16, 20, 16)
@@ -305,8 +307,93 @@ class SettingsPage(QWidget):
         cl.addWidget(self._lbl("Built with PyQt6 · psutil · Ollama"))
         cl.addWidget(self._lbl("© 2026 Quasif — Personal Edition"))
         layout.addWidget(card)
+
+        # Uninstall card
+        uninstall_card = GlassCard(accent_color="#FF2D55")
+        ul = QVBoxLayout(uninstall_card)
+        ul.setContentsMargins(20, 16, 20, 16)
+        ul.setSpacing(10)
+        ul.addWidget(self._lbl("🗑️ Uninstall App", color="#FF2D55", size=14, bold=True))
+        ul.addWidget(self._lbl(
+            "Remove this app from your system completely. "
+            "This will remove startup entries, clear saved settings, "
+            "and show you how to delete the app folder.",
+            size=11
+        ))
+        uninstall_btn = NeonButton("🗑️ Uninstall AI System Optimizer", "#FF2D55")
+        uninstall_btn.clicked.connect(self._uninstall_app)
+        ul.addWidget(uninstall_btn)
+        layout.addWidget(uninstall_card)
+
         layout.addStretch()
         return w
+
+    def _uninstall_app(self):
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Uninstall AI System Optimizer",
+            "Are you sure you want to uninstall this app?\n\n"
+            "This will:\n"
+            "  ✓ Remove from Windows startup\n"
+            "  ✓ Clear all saved settings\n"
+            "  ✓ Show you how to delete the app folder\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        import sys, os
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        results = []
+
+        # 1. Remove from Windows startup registry
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0, winreg.KEY_SET_VALUE
+            )
+            try:
+                winreg.DeleteValue(key, "AI System Optimizer")
+                results.append("✅ Removed from Windows startup")
+            except FileNotFoundError:
+                results.append("ℹ️ Was not in Windows startup")
+            winreg.CloseKey(key)
+        except Exception as e:
+            results.append(f"⚠️ Could not remove startup entry: {e}")
+
+        # 2. Clear settings database
+        try:
+            from config.settings import get_setting
+            db_path = os.path.join(app_dir, "optimizer_settings.db")
+            if os.path.exists(db_path):
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                conn.execute("DELETE FROM settings")
+                conn.commit()
+                conn.close()
+                results.append("✅ Cleared all saved settings")
+        except Exception as e:
+            results.append(f"⚠️ Could not clear settings: {e}")
+
+        # 3. Show folder delete instructions
+        results_text = "\n".join(results)
+        QMessageBox.information(
+            self, "✅ Uninstall Steps Completed",
+            f"Completed:\n{results_text}\n\n"
+            f"📁 To fully remove the app, delete this folder:\n"
+            f"{app_dir}\n\n"
+            "You can delete it in File Explorer or run:\n"
+            f"  rmdir /s /q \"{app_dir}\"\n\n"
+            "The app will close after clicking OK.",
+        )
+        # Exit app
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
+
 
     # ── HELPERS ───────────────────────────────────────────────────
 

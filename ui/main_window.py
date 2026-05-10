@@ -346,11 +346,13 @@ class MainWindow(QMainWindow):
         self._monitor.register_callback(self._bridge.post)
         self._monitor.start()
 
-        # AI status — check in background, update UI on result
+        # AI status — check aggressively at first (Ollama may be starting up)
+        # then slow down once stable
+        self._ai_check_count = 0
         self._refresh_ai_status()
-        ai_timer = QTimer(self)
-        ai_timer.timeout.connect(self._refresh_ai_status)
-        ai_timer.start(15000)
+        self._ai_timer = QTimer(self)
+        self._ai_timer.timeout.connect(self._refresh_ai_status)
+        self._ai_timer.start(5000)  # every 5s initially
 
         # Voice greeting
         if get_setting("voice_enabled", "true") == "true":
@@ -391,28 +393,34 @@ class MainWindow(QMainWindow):
         self._topbar_health.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; font-family: 'Segoe UI';")
 
     def _refresh_ai_status(self):
-        """Run AI status check in background thread to avoid blocking UI."""
-        def _check():
-            try:
-                from ai.ai_service import OllamaInstaller
-                ollama_ok = OllamaInstaller.is_running()
-                service = AIService.get_instance()
-                configured = service.is_configured
-                provider = service.provider_name
-                model = get_setting("ollama_model", "")
-                return ollama_ok, configured, provider, model
-            except Exception:
-                return False, False, "none", ""
+        """Non-blocking: check AI status in background thread."""
+        self._ai_check_count = getattr(self, "_ai_check_count", 0) + 1
+        # After 12 checks (~60s), slow down to every 30s
+        if self._ai_check_count == 12:
+            self._ai_timer.setInterval(30000)
 
         import threading
-        def _worker():
-            result = _check()
-            # Post back to main thread
-            QTimer.singleShot(0, lambda r=result: self._apply_ai_status(*r))
+        def _check():
+            try:
+                from ai.ollama_manager import OllamaManager
+                ollama_ok = OllamaManager.is_api_running()
+                if ollama_ok:
+                    # Reload AI service so it picks up newly configured model
+                    from ai.ai_service import AIService
+                    service = AIService.get_instance()
+                    service.reload()
+                    configured = service.is_configured
+                    model = get_setting("ollama_model", "")
+                else:
+                    configured = False
+                    model = ""
+                QTimer.singleShot(0, lambda a=ollama_ok, c=configured, m=model:
+                    self._apply_ai_status(a, c, m))
+            except Exception:
+                QTimer.singleShot(0, lambda: self._apply_ai_status(False, False, ""))
+        threading.Thread(target=_check, daemon=True).start()
 
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _apply_ai_status(self, ollama_ok, configured, provider, model):
+    def _apply_ai_status(self, ollama_ok: bool, configured: bool, model: str):
         if ollama_ok:
             self._ollama_dot.set_status("online")
             self._ollama_lbl.setText("Ollama: Online")
@@ -422,14 +430,17 @@ class MainWindow(QMainWindow):
             self._ollama_lbl.setText("Ollama: Offline")
             self._ollama_lbl.setStyleSheet("color: #8BA3C7; font-size: 12px; font-family: 'Segoe UI';")
 
-        if configured:
-            self._ai_dot.set_status("online" if ollama_ok else "warning")
-            self._ai_lbl.setText(f"AI: {provider.title()}")
+        if configured and ollama_ok:
+            self._ai_dot.set_status("online")
+            self._ai_lbl.setText("AI: Ollama")
+            self._ai_lbl.setStyleSheet("color: #00FF88; font-size: 12px; font-family: 'Segoe UI';")
             self._model_lbl.setText(f"Model: {model}" if model else "")
         else:
             self._ai_dot.set_status("offline")
-            self._ai_lbl.setText("AI: Not configured")
+            self._ai_lbl.setText("AI: Offline")
+            self._ai_lbl.setStyleSheet("color: #8BA3C7; font-size: 12px; font-family: 'Segoe UI';")
             self._model_lbl.setText("")
+
 
     def _on_quick_cleanup(self):
         self._navigate("cleanup")

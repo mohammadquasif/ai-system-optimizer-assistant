@@ -175,6 +175,54 @@ def main():
     window = MainWindow()
     window.show()
 
+    # ── Force-start Ollama with smallest model in background ─────
+    # This runs silently in background so AI is ready by the time user clicks AI tab
+    def _ensure_ollama():
+        try:
+            from ai.ollama_manager import OllamaManager, PREFERRED_MODELS
+            # If already running, just configure settings
+            if OllamaManager.is_api_running():
+                installed = OllamaManager.list_installed_models()
+                if installed:
+                    # Pick smallest preferred model or first installed
+                    chosen = next(
+                        (p for p in PREFERRED_MODELS if any(
+                            m.startswith(p.split(":")[0]) for m in installed
+                        )),
+                        installed[0]
+                    )
+                    set_setting("ai_provider", "ollama")
+                    set_setting("ollama_model", chosen)
+                    app_logger.info(f"[Ollama] Already running, using: {chosen}")
+                    return
+            # Not running — start it
+            if OllamaManager.is_installed():
+                app_logger.info("[Ollama] Starting service...")
+                OllamaManager._start_service()
+                # Wait up to 15s for it to come up
+                for _ in range(10):
+                    time.sleep(1.5)
+                    if OllamaManager.is_api_running():
+                        installed = OllamaManager.list_installed_models()
+                        if installed:
+                            chosen = next(
+                                (p for p in PREFERRED_MODELS if any(
+                                    m.startswith(p.split(":")[0]) for m in installed
+                                )),
+                                installed[0]
+                            )
+                            set_setting("ai_provider", "ollama")
+                            set_setting("ollama_model", chosen)
+                            app_logger.info(f"[Ollama] Started, using model: {chosen}")
+                        break
+            else:
+                app_logger.warning("[Ollama] Not installed — skipping auto-start.")
+        except Exception as e:
+            app_logger.error(f"[Ollama] Auto-start error: {e}")
+
+    import threading, time as _time
+    threading.Thread(target=_ensure_ollama, daemon=True, name="OllamaAutoStart").start()
+
     # ── Voice greeting ───────────────────────────────────────────
     # Read name from settings first (user may have changed it), fall back to system name
     from ui.main_window import _get_system_username
