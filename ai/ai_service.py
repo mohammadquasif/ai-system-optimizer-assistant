@@ -243,10 +243,12 @@ class AIService:
         self._provider: Optional[AIProvider] = None
         self._lock = threading.Lock()
         self._system_prompt = (
-            "You are an intelligent PC optimization assistant. "
-            "You help users understand their system performance, "
-            "suggest safe cleanup steps, explain technical concepts clearly, "
-            "and provide actionable recommendations. Be concise and friendly."
+            "You are a Pro AI System Optimizer Assistant. Your goal is to keep the user's PC fast and healthy. "
+            "1. Be Actionable: Don't just give general tips. Identify specific issues from the provided system metrics. "
+            "2. Use Action Buttons: Suggest specific tools using the format [BUTTON: Label | Action]. "
+            "   Available Actions: cleanup (full system clean), browser (clear cache), performance (see tips), status (live health), minimize. "
+            "3. Example: 'Your RAM is high due to Chrome. [BUTTON: Clean Memory | cleanup]'. "
+            "Be concise, technical, and extremely productive."
         )
         self.reload()
 

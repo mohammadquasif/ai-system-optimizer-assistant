@@ -155,26 +155,33 @@ class VoiceAssistant:
             with sr.Microphone() as source:
                 logger.info("[STT] Calibrating ambient noise...")
                 try:
-                    recognizer.adjust_for_ambient_noise(source, duration=1)
+                    recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 except Exception:
                     pass
                 logger.info("[STT] Listening for voice commands...")
+                
+                # Signal that we are ready to listen
+                self.listening_ready = True 
 
                 while self._listening:
                     try:
-                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                        # Use a shorter timeout and phrase_time_limit
+                        audio = recognizer.listen(source, timeout=2, phrase_time_limit=8)
                         try:
                             text = recognizer.recognize_google(audio, language="en-US")
                         except sr.UnknownValueError:
                             continue
                         except sr.RequestError:
+                            # Fallback to sphinx if offline
                             try:
                                 text = recognizer.recognize_sphinx(audio)
                             except Exception:
                                 continue
-                        logger.info(f"[STT] Recognized: {text}")
-                        if callback:
-                            callback(text)
+                        
+                        if text:
+                            logger.info(f"[STT] Recognized: {text}")
+                            if callback:
+                                callback(text)
                     except sr.WaitTimeoutError:
                         continue
                     except Exception as e:
