@@ -194,45 +194,46 @@ class VoiceAssistant:
 
 class VoiceCommandHandler:
     """
-    Maps voice commands to application actions.
-    Integrate with the main app by passing action callbacks.
+    Maps voice commands to application actions with conversational AI responses.
+    Responds naturally: "Sure Quasif, cleaning your system now!"
     """
 
-    def __init__(self, voice: VoiceAssistant, actions: dict):
-        """
-        actions: dict of keyword → callable
-        Example: {"optimize": run_cleanup, "status": show_status}
-        """
+    def __init__(self, voice: VoiceAssistant, actions: dict, user_name: str = ""):
         self.voice = voice
         self.actions = actions
+        self.user_name = user_name or "there"
 
     def handle(self, text: str):
-        """Route recognized speech to the appropriate action."""
-        text_lower = text.lower()
-        logger.info(f"[VoiceCmd] Processing: {text_lower}")
+        t = text.lower().strip()
+        logger.info(f"[VoiceCmd] '{t}'")
+        name = self.user_name
 
-        if any(kw in text_lower for kw in ["optimize", "clean", "cleanup", "speed up"]):
-            self.voice.speak("Starting optimization. Please wait.")
+        if any(kw in t for kw in ["clean", "cleanup", "optimize", "speed up", "boost"]):
+            self.voice.speak(f"Sure {name}! Running a full system cleanup for you right now.")
             if "cleanup" in self.actions:
                 self.actions["cleanup"]()
 
-        elif any(kw in text_lower for kw in ["status", "health", "how is my"]):
-            self.voice.speak("Checking system status.")
+        elif any(kw in t for kw in ["status", "health", "how is my", "system performance"]):
             if "status" in self.actions:
-                self.actions["status"]()
+                self.actions["status"]()  # Will speak status inside
 
-        elif any(kw in text_lower for kw in ["stop", "exit", "quit", "close"]):
-            self.voice.speak("Goodbye! Minimizing to system tray.")
+        elif any(kw in t for kw in ["stop", "exit", "quit", "close", "minimize", "goodbye"]):
+            self.voice.speak(f"Goodbye {name}! I'll minimize to the system tray. Call me anytime.")
             if "minimize" in self.actions:
                 self.actions["minimize"]()
 
-        elif any(kw in text_lower for kw in ["help", "what can you do"]):
+        elif any(kw in t for kw in ["help", "what can you do", "commands"]):
             self.voice.speak(
-                "I can optimize your system, check status, clean temporary files, "
-                "and answer questions about your PC performance."
+                f"Sure {name}! You can say: clean my system, check status, "
+                "minimize, or ask me any question about your PC."
             )
 
+        elif any(kw in t for kw in ["hello", "hi", "hey", "good morning", "good evening"]):
+            self.voice.speak(f"Hello {name}! I'm here and your system is being monitored. How can I help?")
+
         else:
-            # Pass to AI if available
+            # Pass to AI for conversational response
+            self.voice.speak(f"Let me check that for you, {name}.")
             if "ai_chat" in self.actions:
                 self.actions["ai_chat"](text)
+

@@ -230,21 +230,36 @@ class AIChatPage(QWidget):
     # ─────────────────────────────────────────────────────────────
 
     def _refresh_ai_status(self):
-        service = AIService.get_instance()
-        if service.is_configured:
-            available = service.is_available
-            if available:
-                self._ai_status_dot.set_status("online")
-                self._ai_status_lbl.setText("AI Online")
-                self._ai_status_lbl.setStyleSheet("color: #00FF88; font-size: 12px; font-family: 'Segoe UI';")
-                self._model_lbl.setText(f"Model: {get_setting('ollama_model', '')}")
-                self._no_ai_card.hide()
-            else:
-                self._ai_status_dot.set_status("warning")
-                self._ai_status_lbl.setText("AI Offline")
-                self._ai_status_lbl.setStyleSheet("color: #FFB800; font-size: 12px; font-family: 'Segoe UI';")
+        """Non-blocking: check AI status in background thread."""
+        import threading
+        def _check():
+            try:
+                service = AIService.get_instance()
+                configured = service.is_configured
+                if not configured:
+                    QTimer.singleShot(0, lambda: self._apply_status(False, False, ""))
+                    return
+                available = service.is_available  # network call — safe in thread
+                model = get_setting("ollama_model", "")
+                QTimer.singleShot(0, lambda a=available, m=model: self._apply_status(True, a, m))
+            except Exception as e:
+                QTimer.singleShot(0, lambda: self._apply_status(False, False, ""))
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _apply_status(self, configured: bool, available: bool, model: str):
+        if configured and available:
+            self._ai_status_dot.set_status("online")
+            self._ai_status_lbl.setText("AI Online")
+            self._ai_status_lbl.setStyleSheet("color: #00FF88; font-size: 12px; font-family: 'Segoe UI';")
+            self._model_lbl.setText(f"Model: {model}")
+            self._no_ai_card.hide()
+        elif configured:
+            self._ai_status_dot.set_status("warning")
+            self._ai_status_lbl.setText("AI Offline")
+            self._ai_status_lbl.setStyleSheet("color: #FFB800; font-size: 12px; font-family: 'Segoe UI';")
         else:
             self._ai_status_dot.set_status("offline")
+            self._ai_status_lbl.setText("AI Not Configured")
             self._no_ai_card.show()
 
     # ─────────────────────────────────────────────────────────────
