@@ -1,15 +1,16 @@
-# ⚡ AI System Optimizer Assistant
+# ⚡ AI System Optimizer Assistant — #aiero #optimize
 
 <div align="center">
 
 ![AI System Optimizer](https://img.shields.io/badge/AI%20System%20Optimizer-v1.0.0-00D4FF?style=for-the-badge&logo=windows&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Keywords](https://img.shields.io/badge/Keywords-aiero_optimize-00FF88?style=for-the-badge)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Ollama](https://img.shields.io/badge/Ollama-0.5b%20to%201.5b-black?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-Personal%20Use-00FF88?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D4?style=for-the-badge&logo=windows)
 
 **One-click AI-powered Windows optimizer.**  
-*Auto Cleanup • Local AI • Voice Commands • Chip UI • On-Demand Only — Zero Background RAM*
+*#aiero #optimize • Auto Cleanup • Local AI • Voice Commands • Chip UI • On-Demand Only*
 
 **by [Mohammad Quasif, DBA (AI)](https://github.com/mohammadquasif)**
 
