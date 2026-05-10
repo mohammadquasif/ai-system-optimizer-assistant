@@ -27,6 +27,7 @@ from ui.pages.cleanup_page import CleanupPage
 from ui.pages.browser_page import BrowserOptimizePage
 from ui.pages.performance_page import PerformancePage, StartupAppsPage
 from ui.pages.settings_page import SettingsPage
+from ui.pages.internet_page import InternetPage
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +133,22 @@ class NavButton(QPushButton):
 # ────────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
+    # Signal emitted from STT background thread — handled on main thread
+    voice_command_received = pyqtSignal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"AI System Optimizer Assistant v{APP_VERSION}")
-        self.setMinimumSize(1100, 720)
-        self.resize(1280, 800)
+        self.setMinimumSize(900, 600)
+        # Responsive sizing: detect screen and set proportional window size
+        screen = QApplication.primaryScreen()
+        if screen:
+            sg = screen.availableGeometry()
+            w = min(1280, int(sg.width() * 0.88))
+            h = min(820, int(sg.height() * 0.88))
+            self.resize(w, h)
+            self.move((sg.width() - w) // 2, (sg.height() - h) // 2)
+        else:
+            self.resize(1280, 800)
 
         # App icon
         import os
@@ -144,7 +156,6 @@ class MainWindow(QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             try:
-                from PyQt6.QtWidgets import QApplication
                 QApplication.instance().setWindowIcon(QIcon(icon_path))
             except Exception:
                 pass
@@ -188,24 +199,47 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(right_container, 1)
 
     def _build_sidebar(self) -> QWidget:
-        sidebar = QWidget()
-        sidebar.setFixedWidth(220)
-        sidebar.setStyleSheet("background: #080C18; border-right: 1px solid #1E2D45;")
-        layout = QVBoxLayout(sidebar)
+        self._sidebar = QWidget()
+        # Responsive: use narrower sidebar on small screens
+        screen = QApplication.primaryScreen()
+        sw = screen.availableGeometry().width() if screen else 1280
+        self._sidebar_expanded = sw >= 1100
+        self._sidebar_full_w = 200
+        self._sidebar_icon_w = 56
+        self._sidebar.setFixedWidth(
+            self._sidebar_full_w if self._sidebar_expanded else self._sidebar_icon_w
+        )
+        self._sidebar.setStyleSheet("background: #080C18; border-right: 1px solid #1E2D45;")
+        layout = QVBoxLayout(self._sidebar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         logo_area = QWidget()
-        logo_area.setFixedHeight(70)
+        logo_area.setFixedHeight(60)
         logo_area.setStyleSheet("background: #0A0E1A; border-bottom: 1px solid #1E2D45;")
-        logo_layout = QVBoxLayout(logo_area)
-        logo_layout.setContentsMargins(16, 12, 16, 12)
-        app_name = QLabel("⚡ AI Optimizer")
-        app_name.setStyleSheet("color: #00D4FF; font-size: 15px; font-weight: 700; font-family: 'Segoe UI';")
-        version_lbl = QLabel(f"v{APP_VERSION}")
-        version_lbl.setStyleSheet("color: #4A6080; font-size: 10px; font-family: 'Segoe UI';")
-        logo_layout.addWidget(app_name)
-        logo_layout.addWidget(version_lbl)
+        logo_layout = QHBoxLayout(logo_area)
+        logo_layout.setContentsMargins(10, 8, 10, 8)
+        logo_layout.setSpacing(6)
+        self._logo_icon = QLabel("⚡")
+        self._logo_icon.setStyleSheet("color: #00D4FF; font-size: 18px;")
+        self._logo_text = QLabel("AI Optimizer")
+        self._logo_text.setStyleSheet(
+            "color: #00D4FF; font-size: 13px; font-weight: 700; font-family: 'Segoe UI';"
+        )
+        self._logo_text.setVisible(self._sidebar_expanded)
+        logo_layout.addWidget(self._logo_icon)
+        logo_layout.addWidget(self._logo_text, 1)
+
+        # Collapse toggle button
+        self._collapse_btn = QPushButton("◀" if self._sidebar_expanded else "▶")
+        self._collapse_btn.setFixedSize(20, 20)
+        self._collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._collapse_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #4A6080; border: none; font-size: 10px; }"
+            "QPushButton:hover { color: #00D4FF; }"
+        )
+        self._collapse_btn.clicked.connect(self._toggle_sidebar)
+        logo_layout.addWidget(self._collapse_btn)
         layout.addWidget(logo_area)
 
         nav_items = [
@@ -213,22 +247,25 @@ class MainWindow(QMainWindow):
             ("ai_chat",     "🤖", "AI Assistant"),
             ("cleanup",     "🧹", "Cleanup"),
             ("browser",     "🌐", "Browser Optim."),
+            ("internet",    "📡", "Internet Speed"),
             ("performance", "📊", "Performance"),
             ("startup",     "🚀", "Startup Apps"),
             ("settings",    "⚙️", "Settings"),
         ]
-        layout.addSpacing(10)
+        layout.addSpacing(8)
+        self._nav_icon_labels = {}
         for key, icon, label in nav_items:
             btn = NavButton(icon, label)
             btn.clicked.connect(lambda _, k=key: self._navigate(k))
             self._nav_buttons[key] = btn
             layout.addWidget(btn)
+            self._nav_icon_labels[key] = (icon, label)
 
         layout.addStretch()
 
         # Voice command button
         self._voice_btn = QPushButton("🎙️  Voice Command")
-        self._voice_btn.setFixedHeight(40)
+        self._voice_btn.setFixedHeight(38)
         self._voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._voice_btn.clicked.connect(self._toggle_voice)
         self._voice_btn.setStyleSheet("""
@@ -237,19 +274,39 @@ class MainWindow(QMainWindow):
                 color: #00D4FF;
                 border: 1px solid #00D4FF40;
                 border-radius: 6px;
-                font-size: 12px;
+                font-size: 11px;
                 font-family: 'Segoe UI';
-                margin: 0 12px;
+                margin: 0 8px;
             }
             QPushButton:hover { background: #00D4FF20; border: 1px solid #00D4FF; }
         """)
         layout.addWidget(self._voice_btn)
         layout.addSpacing(4)
 
-        user_lbl = QLabel(f"👤  {self._user_name}")
-        user_lbl.setStyleSheet("color: #4A6080; font-size: 11px; font-family: 'Segoe UI'; padding: 8px 16px;")
-        layout.addWidget(user_lbl)
-        return sidebar
+        self._user_lbl = QLabel(f"👤  {self._user_name}")
+        self._user_lbl.setStyleSheet(
+            "color: #4A6080; font-size: 10px; font-family: 'Segoe UI'; padding: 6px 10px;"
+        )
+        self._user_lbl.setVisible(self._sidebar_expanded)
+        layout.addWidget(self._user_lbl)
+        return self._sidebar
+
+    def _toggle_sidebar(self):
+        """Collapse/expand the sidebar for responsive layouts."""
+        self._sidebar_expanded = not self._sidebar_expanded
+        w = self._sidebar_full_w if self._sidebar_expanded else self._sidebar_icon_w
+        self._sidebar.setFixedWidth(w)
+        self._logo_text.setVisible(self._sidebar_expanded)
+        self._user_lbl.setVisible(self._sidebar_expanded)
+        self._collapse_btn.setText("◀" if self._sidebar_expanded else "▶")
+        # Update nav button labels
+        for key, btn in self._nav_buttons.items():
+            icon, label = self._nav_icon_labels[key]
+            if self._sidebar_expanded:
+                btn.setText(f"  {icon}  {label}")
+            else:
+                btn.setText(f" {icon} ")
+                btn.setToolTip(label)
 
     def _build_topbar(self) -> QWidget:
         bar = QWidget()
@@ -315,6 +372,7 @@ class MainWindow(QMainWindow):
         self._pages["ai_chat"]     = AIChatPage()
         self._pages["cleanup"]     = CleanupPage()
         self._pages["browser"]     = BrowserOptimizePage()
+        self._pages["internet"]    = InternetPage()
         self._pages["performance"] = PerformancePage()
         self._pages["startup"]     = StartupAppsPage()
         self._pages["settings"]    = SettingsPage()
@@ -328,12 +386,13 @@ class MainWindow(QMainWindow):
         return self._stack
 
     def _build_statusbar(self) -> QWidget:
+        from PyQt6.QtWidgets import QProgressBar
         bar = QWidget()
-        bar.setFixedHeight(30)
+        bar.setFixedHeight(34)
         bar.setStyleSheet("background: #080C18; border-top: 1px solid #1E2D45;")
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(24)
+        layout.setSpacing(20)
 
         self._status_last_cleanup = QLabel("Last cleanup: Never")
         self._status_last_cleanup.setStyleSheet("color: #4A6080; font-size: 10px; font-family: 'Segoe UI';")
@@ -344,10 +403,35 @@ class MainWindow(QMainWindow):
         self._status_msg = QLabel("System monitoring active")
         self._status_msg.setStyleSheet("color: #4A6080; font-size: 10px; font-family: 'Segoe UI';")
 
+        # Voice command progress bar + label (hidden until a command runs)
+        self._voice_action_lbl = QLabel("")
+        self._voice_action_lbl.setStyleSheet(
+            "color: #00D4FF; font-size: 10px; font-weight: 600; font-family: 'Segoe UI';"
+        )
+        self._voice_action_lbl.hide()
+
+        self._voice_progress = QProgressBar()
+        self._voice_progress.setFixedWidth(160)
+        self._voice_progress.setFixedHeight(6)
+        self._voice_progress.setRange(0, 100)
+        self._voice_progress.setValue(0)
+        self._voice_progress.setTextVisible(False)
+        self._voice_progress.setStyleSheet("""
+            QProgressBar { background: #1E2D45; border-radius: 3px; border: none; }
+            QProgressBar::chunk { background: qlineargradient(
+                x1:0, y1:0, x2:1, y2:0,
+                stop:0 #00D4FF, stop:1 #7C3AED);
+                border-radius: 3px;
+            }
+        """)
+        self._voice_progress.hide()
+
         layout.addWidget(self._status_last_cleanup)
         layout.addWidget(self._status_cpu)
         layout.addWidget(self._status_ram)
         layout.addStretch()
+        layout.addWidget(self._voice_action_lbl)
+        layout.addWidget(self._voice_progress)
         layout.addWidget(self._status_msg)
         return bar
 
@@ -380,11 +464,10 @@ class MainWindow(QMainWindow):
         self._ai_timer.timeout.connect(self._refresh_ai_status)
         self._ai_timer.start(5000)  # every 5s initially
 
-        # Voice recognition callback — route through AI Chat page
+        # Voice recognition — emit signal (safe cross-thread delivery to main)
+        self.voice_command_received.connect(self._on_voice_command)
         if get_setting("voice_enabled", "true") == "true":
             self._voice.start()
-            # We don't start listening by default now, only on toggle or idle trigger
-            # self._voice.start_listening(self._on_voice_command) 
             QTimer.singleShot(2000, lambda: self._voice.greet(self._user_name))
             self._update_mic_status(False)
 
@@ -396,32 +479,58 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(900, action_fn)
 
         def _speak_status():
+            """Read live system stats via psutil and speak them — no stale data."""
             try:
-                m = self._monitor.latest
+                import psutil as _ps
+                cpu  = _ps.cpu_percent(interval=None)
+                vm   = _ps.virtual_memory()
+                du   = _ps.disk_usage("C:\\")
+                # Derive a simple health label
+                if vm.percent > 85 or cpu > 85 or du.percent > 90:
+                    health = "under stress"
+                elif vm.percent > 65 or cpu > 60:
+                    health = "moderate"
+                else:
+                    health = "healthy"
                 self._voice.speak(
-                    f"{self._user_name}, your system health is {m.health_score} percent. "
-                    f"CPU is at {m.cpu_percent:.0f} percent. "
-                    f"RAM is at {m.ram_percent:.0f} percent. "
-                    f"Disk is at {m.disk_percent:.0f} percent."
+                    f"{self._user_name}, your system is {health}. "
+                    f"CPU is at {cpu:.0f} percent. "
+                    f"RAM is at {vm.percent:.0f} percent, "
+                    f"{vm.used / 1e9:.1f} of {vm.total / 1e9:.1f} gigabytes used. "
+                    f"Disk C is {du.percent:.0f} percent full."
                 )
-            except Exception:
-                self._voice.speak("Could not read system stats right now.")
+            except Exception as e:
+                logger.error(f"_speak_status error: {e}")
+                self._voice.speak("I could not read your system stats right now. Please try again.")
 
-        self._voice_handler = VoiceCommandHandler(self._voice, {
-            "navigate":        lambda page: QTimer.singleShot(0, lambda p=page: self._navigate(p)),
-            "cleanup":         lambda: QTimer.singleShot(0, self._pages["cleanup"].run_quick_cleanup),
-            "browser_cleanup": lambda: QTimer.singleShot(0,
-                getattr(self._pages["browser"], "_run_optimization", lambda: None)
-            ),
-            "minimize":        lambda: QTimer.singleShot(0, self.hide),
-            "ai_chat":         lambda text: QTimer.singleShot(0,
-                lambda t=text: self._pages["ai_chat"].send_message_external(t)
-            ),
-            "status":          _speak_status,
-        }, user_name=self._user_name)
+        # Voice progress callback — updates status bar on main thread
+        def _voice_progress(msg: str, pct: int):
+            QTimer.singleShot(0, lambda m=msg, p=pct: self._on_voice_progress(m, p))
+
+        self._voice_handler = VoiceCommandHandler(
+            self._voice,
+            {
+                "navigate":        lambda page: QTimer.singleShot(0, lambda p=page: self._navigate(p)),
+                "cleanup":         lambda: QTimer.singleShot(0, self._pages["cleanup"].run_quick_cleanup),
+                "browser_cleanup": lambda: QTimer.singleShot(0,
+                    getattr(self._pages["browser"], "_run_optimization", lambda: None)
+                ),
+                "minimize":        lambda: QTimer.singleShot(0, self.hide),
+                "ai_chat":         lambda text="": QTimer.singleShot(0,
+                    lambda t=text: self._pages["ai_chat"].send_message_external(t) if t else self._navigate("ai_chat")
+                ),
+                "status":          _speak_status,
+                "internet_check":  self._check_internet_performance,
+                "stop_voice":      lambda: QTimer.singleShot(0, self._toggle_voice),
+            },
+            user_name=self._user_name,
+            progress_cb=_voice_progress,
+        )
 
         # Inject command handler into AI chat page for local command interception
-        self._pages["ai_chat"].set_command_handler(self._voice_handler)
+        chat_page = self._pages["ai_chat"]
+        chat_page.set_command_handler(self._voice_handler)
+        chat_page.voice_toggle_requested.connect(self._toggle_voice)
 
 
     @pyqtSlot(object)
@@ -512,7 +621,9 @@ class MainWindow(QMainWindow):
     # ────────────────────────────────────────────────────────
 
     def _toggle_voice(self):
+        """Toggle voice listening on/off. Fixes the if/else logic bug."""
         if self._voice_listening:
+            # ── STOP LISTENING ────────────────────────────────────
             self._voice.stop_listening()
             self._voice_listening = False
             self._voice_btn.setText("🎙️  Voice Command")
@@ -524,8 +635,10 @@ class MainWindow(QMainWindow):
                 }
                 QPushButton:hover { background: #00D4FF20; border: 1px solid #00D4FF; }
             """)
+            self._update_mic_status(False)
             self._voice.speak(f"Voice command off, {self._user_name}.")
         else:
+            # ── START LISTENING — auto-enable mic + speaker ────────
             self._voice_listening = True
             self._voice_btn.setText("🔴  Listening... (click to stop)")
             self._voice_btn.setStyleSheet("""
@@ -534,10 +647,23 @@ class MainWindow(QMainWindow):
                     border: 1px solid #FF2D55; border-radius: 6px;
                     font-size: 12px; font-family: 'Segoe UI'; margin: 0 12px;
                 }
+                QPushButton:hover { background: #FF2D5540; }
             """)
+            # Make sure TTS (speaker) is enabled
+            self._voice.set_enabled(True)
+            if not self._voice._running:
+                self._voice.start()
             self._voice.speak(f"I'm listening, {self._user_name}. What can I do for you?")
-            self._voice.start_listening(self._on_voice_command)
+            # Use _stt_callback so STT thread crosses safely to main thread via signal
+            self._voice.start_listening(self._stt_callback)
             self._update_mic_status(True)
+
+        # Sync mic button state in AI chat page
+        if "ai_chat" in self._pages:
+            try:
+                self._pages["ai_chat"]._mic_btn.update_style(self._voice_listening)
+            except Exception:
+                pass
 
     def _update_mic_status(self, listening: bool):
         if listening:
@@ -549,13 +675,74 @@ class MainWindow(QMainWindow):
             self._mic_lbl.setText("Mic: Off")
             self._mic_lbl.setStyleSheet("color: #4A6080; font-size: 12px; font-family: 'Segoe UI';")
 
+    def _on_voice_progress(self, msg: str, pct: int):
+        """Show voice command progress in the status bar."""
+        if pct < 0:
+            return
+        self._voice_action_lbl.setText(msg)
+        self._voice_action_lbl.show()
+        self._voice_progress.setValue(pct)
+        self._voice_progress.show()
+        # Auto-hide after completion
+        if pct >= 100:
+            QTimer.singleShot(2500, self._hide_voice_progress)
+
+    def _hide_voice_progress(self):
+        self._voice_action_lbl.hide()
+        self._voice_progress.hide()
+        self._voice_progress.setValue(0)
+
     def _on_voice_command(self, text: str):
-        """Handle recognized voice command — route to AI Assistant chat."""
-        logger.info(f"[Voice] Command: {text}")
-        # Send to AI Chat page (which handles local commands + AI bubbles)
-        QTimer.singleShot(0, lambda t=text: self._pages["ai_chat"].send_message_external(t))
-        # Visual feedback: stop listening after one command is caught to avoid confusion
-        QTimer.singleShot(500, self._toggle_voice)
+        """Handle recognized voice command — runs on MAIN THREAD via signal.
+        As requested: ALWAYS open AI Assistant page and run command there
+        so user sees the question, analysis, and result in chat.
+        """
+        logger.info(f"[Voice] Redirecting to AI Chat: '{text}'")
+        # Visual feedback in status bar
+        self._on_voice_progress(f"🎙️ Heard: \"{text}\"", 20)
+
+        # 1. Switch to AI chat page
+        self._navigate("ai_chat")
+
+        # 2. Inject and run as a chat message (handles both local actions and AI)
+        QTimer.singleShot(100, lambda t=text: self._pages["ai_chat"].send_message_external(t))
+
+        # Clear progress bar after 4 seconds
+        QTimer.singleShot(4000, self._hide_voice_progress)
+
+    def _check_internet_performance(self):
+        """Analyze bandwidth hogs and offer a boost button — via AI Chat & New Page."""
+        from monitoring.system_monitor import get_network_usage
+        self._navigate("internet")
+        chat = self._pages["ai_chat"]
+        
+        def _run():
+            hogs = get_network_usage()
+            if not hogs:
+                return "✅ Your network usage is low. No significant bandwidth hogs detected."
+            
+            report = "🌐 **Network Usage Report**\n" + ("─"*30) + "\n"
+            report += "The following apps are actively using your internet:\n\n"
+            for h in hogs[:5]:
+                report += f"• **{h['name']}** ({h['connections']} active connections) - *{h['type']}*\n"
+            
+            report += "\n\n💡 **Tip:** If you feel slowness after a browser cleanup, it's usually because the browser is rebuilding its cache. To speed up your connection immediately:\n"
+            report += "[BUTTON: 🚀 Boost My Internet | boost_network]"
+            return report
+
+        chat._add_system_message("Analyzing your internet connection...")
+        from ui.pages.performance_page import _FetchWorker
+        worker = _FetchWorker(_run)
+        worker.result_ready.connect(lambda res: chat._add_bubble(res, "assistant"))
+        worker.start()
+        # Ensure worker isn't GC'd
+        if not hasattr(self, "_workers"): self._workers = []
+        self._workers.append(worker)
+
+    def _stt_callback(self, text: str):
+        """Called from STT background thread — emits signal to safely cross to main thread."""
+        logger.info(f"[Voice] STT callback: '{text}'")
+        self.voice_command_received.emit(text)
 
     # ────────────────────────────────────────────────────────
     # MISC
@@ -566,14 +753,20 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self):
         self._tray = QSystemTrayIcon(self)
-        pix = QPixmap(32, 32)
-        pix.fill(QColor("#0A0E1A"))
-        painter = QPainter(pix)
-        painter.setPen(QColor("#00D4FF"))
-        painter.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "⚡")
-        painter.end()
-        self._tray.setIcon(QIcon(pix))
+        import os
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
+        if os.path.exists(icon_path):
+            self._tray.setIcon(QIcon(icon_path))
+        else:
+            # Fallback
+            pix = QPixmap(32, 32)
+            pix.fill(QColor("#0A0E1A"))
+            painter = QPainter(pix)
+            painter.setPen(QColor("#00D4FF"))
+            painter.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+            painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "⚡")
+            painter.end()
+            self._tray.setIcon(QIcon(pix))
         self._tray.setToolTip("AI System Optimizer Assistant")
 
         menu = QMenu()

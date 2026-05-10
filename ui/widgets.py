@@ -439,3 +439,35 @@ class NeonProgressBar(QProgressBar):
                 border-radius: 3px;
             }}
         """)
+
+
+# ──────────────────────────────────────────────────────────────────
+# NEON ICON BUTTON (Circular)
+# ──────────────────────────────────────────────────────────────────
+
+class NeonIconButton(QPushButton):
+    """Circular neon button for icons (e.g. Mic)."""
+    def __init__(self, icon_text: str, color: str = "#00D4FF", parent=None):
+        super().__init__(icon_text, parent)
+        self._color = color
+        self.setFixedSize(40, 40)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_style(False)
+
+    def update_style(self, active: bool):
+        c = "#FF2D55" if active else self._color
+        bg = f"{c}30" if active else f"{c}15"
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg};
+                color: {c};
+                border: 1px solid {c}60;
+                border-radius: 20px;
+                font-size: 18px;
+            }}
+            QPushButton:hover {{
+                background: {c}40;
+                border: 1px solid {c};
+                color: white;
+            }}
+        """)

@@ -37,6 +37,8 @@ class VoiceAssistant:
     # ─────────────────────────────────────────
 
     def start(self):
+        if self._running:
+            return  # already running
         if not self._enabled:
             logger.info("Voice assistant disabled in settings.")
             return
@@ -47,6 +49,7 @@ class VoiceAssistant:
 
     def stop(self):
         self._running = False
+        self._listening = False
         self._tts_queue.put(None)  # Sentinel to unblock queue
         logger.info("VoiceAssistant stopped.")
 
@@ -61,7 +64,7 @@ class VoiceAssistant:
                 except queue.Empty:
                     break
         self._tts_queue.put(text)
-        logger.debug(f"TTS queued: {text[:60]}")
+        logger.debug(f"TTS queued: {text[:80]}")
 
     def greet(self, name: str = "there"):
         """Speak a context-aware startup greeting."""
@@ -74,16 +77,19 @@ class VoiceAssistant:
         )
 
     def start_listening(self, callback: Optional[Callable[[str], None]] = None):
-        """Start STT listening in background thread."""
+        """Start STT listening in background thread (idempotent)."""
         if self._listening:
+            logger.debug("[STT] Already listening, skipping start.")
             return
         cb = callback or self._on_command
+        self._listening = True
         self._stt_thread = threading.Thread(target=self._stt_loop, args=(cb,), daemon=True)
         self._stt_thread.start()
-        self._listening = True
+        logger.info("[STT] Listening thread started.")
 
     def stop_listening(self):
         self._listening = False
+        logger.info("[STT] Listening stopped.")
 
     def set_enabled(self, enabled: bool):
         self._enabled = enabled
@@ -103,15 +109,15 @@ class VoiceAssistant:
                     if "english" in v.name.lower() or "en" in v.id.lower():
                         engine.setProperty("voice", v.id)
                         break
-            engine.setProperty("rate", 175)
-            engine.setProperty("volume", 0.9)
+            engine.setProperty("rate", 170)
+            engine.setProperty("volume", 0.95)
             return engine
         except Exception as e:
             logger.error(f"TTS engine init failed: {e}")
             return None
 
     def _tts_loop(self):
-        """TTS worker loop."""
+        """TTS worker loop — runs on dedicated thread."""
         engine = self._init_tts_engine()
         if engine is None:
             logger.warning("TTS unavailable. Voice features disabled.")
@@ -132,7 +138,7 @@ class VoiceAssistant:
                 time.sleep(0.5)
 
     def _stt_loop(self, callback: Optional[Callable[[str], None]]):
-        """STT listener loop."""
+        """STT listener loop — runs continuously until stop_listening() called."""
         try:
             import speech_recognition as sr
         except ImportError:
@@ -151,48 +157,50 @@ class VoiceAssistant:
             recognizer = sr.Recognizer()
             recognizer.energy_threshold = 300
             recognizer.dynamic_energy_threshold = True
+            recognizer.pause_threshold = 0.8  # faster response after speaking
 
             with sr.Microphone() as source:
                 logger.info("[STT] Calibrating ambient noise...")
                 try:
-                    recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                    recognizer.adjust_for_ambient_noise(source, duration=0.6)
                 except Exception:
                     pass
-                logger.info("[STT] Listening for voice commands...")
-                
-                # Signal that we are ready to listen
-                self.listening_ready = True 
+                logger.info("[STT] Ready. Listening for voice commands...")
 
                 while self._listening:
                     try:
-                        # Use a shorter timeout and phrase_time_limit
-                        audio = recognizer.listen(source, timeout=2, phrase_time_limit=8)
+                        audio = recognizer.listen(source, timeout=3, phrase_time_limit=10)
+                        text = None
                         try:
                             text = recognizer.recognize_google(audio, language="en-US")
                         except sr.UnknownValueError:
                             continue
                         except sr.RequestError:
-                            # Fallback to sphinx if offline
+                            # Offline fallback
                             try:
                                 text = recognizer.recognize_sphinx(audio)
                             except Exception:
                                 continue
-                        
-                        if text:
-                            logger.info(f"[STT] Recognized: {text}")
+
+                        if text and text.strip():
+                            logger.info(f"[STT] Recognized: '{text}'")
                             if callback:
-                                callback(text)
+                                callback(text.strip())
                     except sr.WaitTimeoutError:
                         continue
+                    except OSError as e:
+                        logger.warning(f"[STT] Mic error: {e}")
+                        time.sleep(1)
                     except Exception as e:
                         logger.debug(f"[STT] listen error: {e}")
-                        time.sleep(1)
+                        time.sleep(0.5)
         except OSError as e:
             logger.warning(f"[STT] Microphone not available: {e}")
         except Exception as e:
             logger.error(f"[STT] Loop error: {e}")
         finally:
             self._listening = False
+            logger.info("[STT] Listening thread exited.")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -201,134 +209,298 @@ class VoiceAssistant:
 
 class VoiceCommandHandler:
     """
-    Full command interpreter for both voice AND typed chat commands.
+    Full command interpreter for voice AND typed chat commands.
 
-    When user says/types:
-      "cleanup my system"   → speaks "Sure {name}…" → navigates to Cleanup → runs it → speaks done
-      "browser cleanup"     → navigates to Browser → runs optimization
-      "how is my system"    → speaks live stats
-      "help / what can you" → lists commands
-      confused input        → asks for clarification with options
+    When user says/types a command:
+      → Speaks "Sure {name}, I'm on it!" immediately
+      → Shows progress in UI via progress_cb
+      → Executes action
+      → Speaks completion
+      → If confused → asks clarifying question with options
     """
 
-    def __init__(self, voice: VoiceAssistant, actions: dict, user_name: str = ""):
+    # Intent definitions: (keywords, action_key, spoken_name)
+    INTENTS = [
+        (["clean my system", "cleanup my system", "clean the system", "system cleanup",
+          "optimize my pc", "speed up my pc", "clean up pc", "clean pc",
+          "run cleanup", "quick clean", "clean system"],
+         "cleanup", "System Cleanup"),
+
+        (["browser", "browser cache", "clean browser", "browser cleanup",
+          "clear browser", "chrome cache", "edge cache", "firefox cache",
+          "clear cache"],
+         "browser_cleanup", "Browser Cleanup"),
+
+        (["status", "health", "how is my system", "how is my pc",
+          "system performance", "ram usage", "cpu usage",
+          "check my system", "system check"],
+         "status", "System Status"),
+
+        (["performance", "tips", "performance tips", "startup apps",
+          "startup", "boot apps"],
+         "performance", "Performance"),
+
+        (["internet", "speed", "internet speed", "slow internet", "wifi", "network",
+          "connection", "boost internet", "fix internet", "check internet",
+          "bandwidth", "who is using my internet", "internet page", "network page"],
+         "internet", "Internet"),
+
+        (["dashboard", "home", "overview", "main screen"],
+         "dashboard", "Dashboard"),
+
+        (["ai", "chat", "ask ai", "open ai", "ai assistant", "assistant"],
+         "ai_chat", "AI Assistant"),
+
+        (["minimize", "hide", "minimize window"],
+         "minimize", "Minimize"),
+
+        (["close", "goodbye", "bye", "exit", "quit"],
+         "exit", "Exit"),
+
+        (["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "good night"],
+         "greet", "Greeting"),
+
+        (["help", "what can you do", "commands", "what to say", "options"],
+         "help", "Help"),
+    ]
+
+    # Ambiguous terms that need clarification
+    AMBIGUOUS = {
+        "clean": [
+            ("Clean my entire system (temp files, cache, GPU cache)", "clean my system"),
+            ("Clean only the browser cache", "browser cleanup"),
+        ],
+        "clear": [
+            ("Clear system temp files and cache", "clean my system"),
+            ("Clear browser cache only", "browser cleanup"),
+        ],
+        "stop": [
+            ("Minimize the app", "minimize"),
+            ("Stop listening (turn off mic)", "__stop_voice__"),
+        ],
+        "open": [
+            ("Open the AI assistant chat", "ai assistant"),
+            ("Open the performance page", "performance tips"),
+            ("Open the dashboard", "dashboard"),
+        ],
+    }
+
+    def __init__(self, voice: VoiceAssistant, actions: dict, user_name: str = "",
+                 progress_cb=None):
         self.voice = voice
         self.user_name = user_name or "there"
-        # actions dict (all optional):
-        #   navigate(page_key)          - switch to a page
-        #   cleanup()                   - run system cleanup
-        #   browser_cleanup()           - run browser optimization
-        #   status()                    - speak system status
-        #   minimize()                  - minimize window
-        #   ai_chat(text)               - send text to AI chat
         self.actions = actions
+        self._progress_cb = progress_cb  # callable(message: str, percent: int) or None
+        self._pending_clarification = None  # list of (label, command) options
+        self._import_threading()
 
-    # Public entry points (used by voice STT and chat input)
+    def _import_threading(self):
+        import threading as _t
+        self._threading = _t
 
-    def handle(self, text: str):
-        """Process a command from voice recognition or chat input."""
-        t = text.lower().strip()
-        logger.info(f"[Cmd] '{t}'")
-        name = self.user_name
+    def _name(self):
+        return self.user_name
 
-        # ── CLEANUP ───────────────────────────────────────────────
-        if any(kw in t for kw in [
-            "clean my system", "cleanup my system", "clean the system",
-            "system cleanup", "optimize my pc", "speed up my pc",
-            "clean up pc", "clean pc", "run cleanup", "quick clean",
-        ]):
-            self.voice.speak(f"Sure {name}! I'm starting a full system cleanup now. You can see the progress in the Cleanup tab.")
-            self._do("navigate", "cleanup")
-            # Small delay so navigation completes before running
-            threading.Timer(0.8, lambda: self._do("cleanup")).start()
-            return True
+    def _progress(self, msg: str, pct: int = -1):
+        """Emit progress update to UI (if callback registered)."""
+        if self._progress_cb:
+            try:
+                self._progress_cb(msg, pct)
+            except Exception:
+                pass
 
-        # ── BROWSER CLEANUP ───────────────────────────────────────
-        if any(kw in t for kw in [
-            "browser", "browser cache", "clean browser", "browser cleanup",
-            "clear browser", "chrome", "edge cache", "firefox cache",
-        ]):
-            self.voice.speak(f"Sure {name}! Opening the browser optimization tool now.")
-            self._do("navigate", "browser")
-            threading.Timer(0.8, lambda: self._do("browser_cleanup")).start()
-            return True
+    # ── Public entry points ───────────────────────────────────────
 
-        # ── STATUS / HEALTH ───────────────────────────────────────
-        if any(kw in t for kw in [
-            "status", "health", "how is my system", "how is my pc",
-            "system performance", "ram usage", "cpu usage",
-            "how are you", "check my system",
-        ]):
-            self._do("status")
-            return True
-
-        # ── PERFORMANCE PAGE ──────────────────────────────────────
-        if any(kw in t for kw in ["performance", "tips", "performance tips", "startup apps"]):
-            self.voice.speak(f"Opening performance page, {name}.")
-            self._do("navigate", "performance")
-            return
-
-        # ── DASHBOARD ─────────────────────────────────────────────
-        if any(kw in t for kw in ["dashboard", "home", "overview", "main"]):
-            self.voice.speak(f"Taking you to the dashboard, {name}.")
-            self._do("navigate", "dashboard")
-            return
-
-        # ── AI CHAT ───────────────────────────────────────────────
-        if any(kw in t for kw in ["chat", "ask ai", "open ai", "ai assistant"]):
-            self.voice.speak(f"Opening AI assistant, {name}. Ask me anything!")
-            self._do("navigate", "ai_chat")
-            return
-
-        # ── MINIMIZE / CLOSE ──────────────────────────────────────
-        if any(kw in t for kw in ["minimize", "hide", "close", "goodbye", "bye", "exit"]):
-            self.voice.speak(f"Minimizing for you, {name}. I'll be here when you need me.")
-            self._do("minimize")
-            return
-
-        # ── GREETINGS ─────────────────────────────────────────────
-        if any(kw in t for kw in ["hello", "hi", "hey", "good morning", "good evening"]):
-            self.voice.speak(
-                f"Hello {name}! I'm here and your system is being monitored. "
-                "Say 'clean my system', 'browser cleanup', or 'check status' to get started."
-            )
-            return
-
-        # ── HELP ─────────────────────────────────────────────────
-        if any(kw in t for kw in ["help", "what can you do", "commands", "what to say"]):
-            self.voice.speak(
-                f"Sure {name}! Here's what I can do. "
-                "Say: clean my system, browser cleanup, check status, "
-                "performance tips, open dashboard, or minimize."
-            )
-            return
-
-        # ── CONFUSED — ask for clarification ─────────────────────
-        return False
-
-    def handle_chat(self, text: str, speak_response: bool = True):
+    def handle(self, text: str) -> tuple:
         """
-        Process command from the AI chat box.
-        If it maps to a direct action, execute it.
-        Otherwise pass to AI for a conversational response.
-        Returns True if command was handled locally, False if should go to AI.
+        Process a command from voice recognition or a chat button.
+        Returns (handled: bool, response_text: str)
         """
         t = text.lower().strip()
+        name = self._name()
+        logger.info(f"[VoiceCmd] Handling: '{t}'")
 
-        # Check if any known command matches
-        local_commands = [
-            (["clean", "cleanup", "optimize", "speed up"], None),
-            (["browser", "chrome", "edge", "firefox"], None),
-            (["help", "commands", "what can you"], None),
-            (["minimize", "hide", "close", "exit"], None),
-        ]
-        for keywords, _ in local_commands:
+        # ── If we are waiting for a clarification choice ──────────
+        if self._pending_clarification:
+            return self._resolve_clarification(t)
+
+        # ── Match intent ──────────────────────────────────────────
+        matched_action = None
+        matched_label  = None
+        for keywords, action_key, spoken_name in self.INTENTS:
             if any(kw in t for kw in keywords):
-                self.handle(text)
-                return True
-        return False
+                matched_action = action_key
+                matched_label  = spoken_name
+                break
 
-    # ── Internal helper ──────────────────────────────────────────
+        # ── Check ambiguous single-word triggers ──────────────────
+        if matched_action is None:
+            for trigger, options in self.AMBIGUOUS.items():
+                if t == trigger or t.startswith(trigger + " "):
+                    return self._ask_clarification(trigger, options)
+
+        if matched_action is None:
+            return False, ""  # Not handled — pass to AI
+
+        # ── Execute matched intent ────────────────────────────────
+        return self._execute(matched_action, matched_label, t)
+
+    def handle_chat(self, text: str, speak_response: bool = True) -> tuple:
+        """
+        Process command typed in the AI chat box.
+        Returns (handled: bool, response_text: str)
+        """
+        t = text.lower().strip()
+
+        # Only intercept if the FULL phrase matches a direct action
+        direct_triggers = {
+            "clean my system", "cleanup my system", "system cleanup",
+            "browser cleanup", "clean browser", "browser cache",
+            "check status", "system status", "system health",
+            "open dashboard", "go to dashboard",
+            "open performance", "performance tips", "startup apps",
+            "minimize", "minimize app",
+            "open ai chat", "ai assistant",
+            "help", "what can you do",
+        }
+        if t in direct_triggers:
+            # We pass speak_response=False if we only want the text, 
+            # but usually we want both.
+            return self.handle(text)
+        return False, ""
+
+    def _execute(self, action_key: str, spoken_name: str, original_text: str) -> tuple:
+        """Execute an action with full spoken feedback + progress."""
+        name = self._name()
+
+        if action_key == "greet":
+            msg = f"Hello {name}! I'm here. Say 'clean my system', 'check status', 'browser cleanup', or 'help' to see all commands."
+            self.voice.speak(msg)
+            return True, msg
+
+        if action_key == "help":
+            msg = f"Sure {name}! Here's what I can do. Say: clean my system, browser cleanup, check system status, open dashboard, performance tips, open AI assistant, or minimize."
+            self.voice.speak(msg)
+            return True, msg
+
+        if action_key == "exit":
+            msg = f"Sure {name}, minimizing now. I'll be here when you need me."
+            self.voice.speak(msg)
+            self._do("minimize")
+            return True, msg
+
+        if action_key == "minimize":
+            msg = f"Sure {name}, minimizing."
+            self.voice.speak(msg)
+            self._do("minimize")
+            return True, msg
+
+        if action_key == "status":
+            msg = f"Sure {name}, checking your system status right now."
+            self.voice.speak(msg)
+            self._progress("🔍 Reading system metrics...", 20)
+            self._do("status")
+            self._progress("✅ System status complete.", 100)
+            return True, msg
+
+        if action_key == "cleanup":
+            msg = f"Sure {name}, I'm starting a full system cleanup right now. You can watch the progress in the Cleanup tab."
+            self.voice.speak(msg)
+            self._progress("🗑️ Starting system cleanup...", 10)
+            self._do("navigate", "cleanup")
+            self._threading.Timer(0.9, lambda: (
+                self._progress("🗑️ Running cleanup engine...", 40),
+                self._do("cleanup"),
+            )).start()
+            return True, msg
+
+        if action_key == "browser_cleanup":
+            msg = f"Sure {name}, opening browser cleanup. This will clear cache safely."
+            self.voice.speak(msg)
+            self._progress("🌐 Starting browser cleanup...", 10)
+            self._do("navigate", "browser")
+            self._threading.Timer(0.9, lambda: (
+                self._progress("🌐 Running browser optimization...", 40),
+                self._do("browser_cleanup"),
+            )).start()
+            return True, msg
+
+        if action_key == "performance":
+            msg = f"Sure {name}, opening the performance and startup apps page."
+            self.voice.speak(msg)
+            self._progress("⚡ Loading performance data...", 30)
+            self._do("navigate", "performance")
+            return True, msg
+
+        if action_key == "internet":
+            msg = f"Sure {name}, analyzing your network connection right now."
+            self.voice.speak(msg)
+            self._progress("🌐 Analyzing bandwidth usage...", 20)
+            self._do("internet_check")
+            return True, msg
+
+        if action_key == "dashboard":
+            msg = f"Sure {name}, taking you to the dashboard."
+            self.voice.speak(msg)
+            self._progress("🏠 Navigating to dashboard...", 50)
+            self._do("navigate", "dashboard")
+            return True, msg
+
+        if action_key == "ai_chat":
+            msg = f"Sure {name}, opening AI assistant. Ask me anything!"
+            self.voice.speak(msg)
+            self._do("navigate", "ai_chat")
+            return True, msg
+
+        return False, ""
+
+    def _ask_clarification(self, trigger: str, options: list) -> tuple:
+        """Speak clarification options when command is ambiguous."""
+        self._pending_clarification = options
+        name = self._name()
+
+        option_text = ". ".join(
+            f"Say option {i+1} for {label}" for i, (label, _) in enumerate(options)
+        )
+        msg = f"I heard '{trigger}', {name}. Did you mean: {option_text}?"
+        self.voice.speak(msg)
+        logger.info(f"[VoiceCmd] Clarification requested for '{trigger}'")
+        return True, msg  # handled (waiting for follow-up)
+
+    def _resolve_clarification(self, text: str) -> tuple:
+        """Resolve a pending clarification with user's follow-up."""
+        options = self._pending_clarification
+        self._pending_clarification = None
+
+        t = text.lower().strip()
+
+        # Match by number ("option 1", "first", "1")
+        chosen_cmd = None
+        for i, (label, cmd) in enumerate(options):
+            num_words = ["first", "second", "third", "fourth"]
+            if (str(i + 1) in t or
+                f"option {i+1}" in t or
+                (i < len(num_words) and num_words[i] in t) or
+                any(kw in t for kw in label.lower().split()[:3])):
+                chosen_cmd = cmd
+                break
+
+        if chosen_cmd is None:
+            msg = f"I didn't catch that. Please say 'option 1' or 'option 2'."
+            self.voice.speak(msg)
+            self._pending_clarification = options  # keep waiting
+            return True, msg
+
+        if chosen_cmd == "__stop_voice__":
+            msg = f"Okay, turning off voice commands."
+            self.voice.speak(msg)
+            # Signal main window to stop listening
+            if "stop_voice" in self.actions:
+                self._do("stop_voice")
+            return True, msg
+
+        # Execute the resolved command
+        return self.handle(chosen_cmd)
 
     def _do(self, action: str, *args):
         """Safely call an action from actions dict."""

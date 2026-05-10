@@ -34,6 +34,7 @@ Startup:
 import sys
 import os
 import logging
+import ctypes
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,6 +44,46 @@ from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor, QLinearGradient, QBrus
 
 from config.settings import get_setting, set_setting, init_db, logger as app_logger
 from ai.ollama_manager import OllamaManager, SystemProfile
+
+
+# ─────────────────────────────────────────────────────────────────
+# SINGLE INSTANCE LOCK — Windows Named Mutex
+# ─────────────────────────────────────────────────────────────────
+
+_MUTEX_NAME = "Global\\AISystemOptimizer_SingleInstance_v1"
+_mutex_handle = None
+
+def _acquire_single_instance_lock() -> bool:
+    """
+    Try to create a named mutex. Returns True if this is the first instance.
+    Returns False if another instance already holds the mutex.
+    The mutex is released automatically when this process exits.
+    """
+    global _mutex_handle
+    try:
+        _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+        last_err = ctypes.windll.kernel32.GetLastError()
+        ERROR_ALREADY_EXISTS = 183
+        if last_err == ERROR_ALREADY_EXISTS:
+            return False  # Another instance is running
+        return True
+    except Exception as e:
+        app_logger.debug(f"Mutex check failed (non-Windows?): {e}")
+        return True  # Assume OK on non-Windows
+
+
+def _bring_existing_to_front():
+    """Find and bring the existing app window to foreground."""
+    try:
+        import win32gui, win32con
+        def _cb(hwnd, _):
+            title = win32gui.GetWindowText(hwnd)
+            if "AI System Optimizer" in title and win32gui.IsWindowVisible(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(hwnd)
+        win32gui.EnumWindows(_cb, None)
+    except Exception:
+        pass  # win32gui not available — silently ignore
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -115,7 +156,36 @@ def _clear_countdown(window):
 # MAIN
 # ─────────────────────────────────────────────────────────────────
 
+def _kill_old_instances():
+    """Kill any previously running instances of the app to prevent duplicates."""
+    try:
+        import psutil
+        current_pid = os.getpid()
+        for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+            if p.info['pid'] == current_pid:
+                continue
+            name = (p.info['name'] or "").lower()
+            cmdline = p.info['cmdline'] or []
+            is_our_app = "aisystemoptimizer.exe" in name or any("app.py" in c.lower() for c in cmdline)
+            if ("python" in name or "aisystemoptimizer" in name) and is_our_app:
+                try:
+                    p.kill()
+                    app_logger.info(f"Killed old instance PID {p.info['pid']}")
+                except Exception:
+                    pass
+    except Exception as e:
+        app_logger.debug(f"Failed to check old instances: {e}")
+
+
 def main():
+    # ── Single instance check (fast mutex-based, before anything else) ──
+    if not _acquire_single_instance_lock():
+        app_logger.info("Another instance already running — bringing it to front and exiting.")
+        _bring_existing_to_front()
+        # Kill any zombie instances that lost the mutex (edge-cases)
+        _kill_old_instances()
+        sys.exit(0)
+    _kill_old_instances()  # Clean up any zombies from crashed previous run
     app_logger.info("=" * 60)
     app_logger.info("AI System Optimizer Assistant v1.0.0 — Mohammad Quasif")
     app_logger.info("=" * 60)

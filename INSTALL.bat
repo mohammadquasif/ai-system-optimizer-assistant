@@ -257,7 +257,17 @@ echo    Launching AI System Optimizer now...
 echo  ============================================================
 echo.
 
-start "" "!PYTHONW_PATH!" "%SCRIPT_DIR%app.py"
+:: Kill any stale instance before launching fresh
+taskkill /F /IM python.exe /FI "WINDOWTITLE eq AI System Optimizer*" >nul 2>&1
+taskkill /F /IM pythonw.exe /FI "WINDOWTITLE eq AI System Optimizer*" >nul 2>&1
+taskkill /F /IM AISystemOptimizer.exe >nul 2>&1
+
+:: Launch silently with pythonw (no console window)
+if "!PYTHONW_PATH!"=="python" (
+    start "" pythonw "%SCRIPT_DIR%app.py"
+) else (
+    start "" "!PYTHONW_PATH!" "%SCRIPT_DIR%app.py"
+)
 
 timeout /t 2 /nobreak >nul
 echo  App launched! This window will close.

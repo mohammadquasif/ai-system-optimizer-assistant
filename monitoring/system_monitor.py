@@ -166,33 +166,149 @@ class SystemMonitor:
 
 
 def get_startup_apps() -> List[dict]:
-    """Return list of startup applications from registry and startup folder."""
+    """Return ALL startup apps from: registry Run/RunOnce, startup folders, Task Scheduler."""
     import winreg
+    import os
+    from pathlib import Path
+
     startup_apps = []
+    seen: set = set()
+
+    def _add(name, path, source, enabled=True):
+        key = (name.lower()[:40], path.lower()[:60])
+        if key not in seen:
+            seen.add(key)
+            startup_apps.append({"name": name, "path": path,
+                                  "source": source, "enabled": enabled})
+
+    # 1. Registry Run / RunOnce (HKCU + HKLM, 64-bit + 32-bit WOW)
     reg_paths = [
-        (winreg.HKEY_CURRENT_USER,  r"Software\Microsoft\Windows\CurrentVersion\Run"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run"),
+        (winreg.HKEY_CURRENT_USER,  r"Software\Microsoft\Windows\CurrentVersion\Run",     "Registry (User)"),
+        (winreg.HKEY_CURRENT_USER,  r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "Registry (User RunOnce)"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run",     "Registry (System)"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "Registry (System RunOnce)"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "Registry (32-bit)"),
     ]
-    for hive, path in reg_paths:
+    for hive, path, source in reg_paths:
         try:
-            key = winreg.OpenKey(hive, path)
+            key = winreg.OpenKey(hive, path, 0, winreg.KEY_READ)
             i = 0
             while True:
                 try:
                     name, value, _ = winreg.EnumValue(key, i)
-                    startup_apps.append({
-                        "name": name,
-                        "path": value,
-                        "source": "Registry",
-                        "enabled": True,
-                    })
+                    _add(name, value, source, enabled=True)
                     i += 1
                 except OSError:
                     break
             winreg.CloseKey(key)
         except Exception:
             pass
+
+    # 2. User Startup folder
+    user_startup = Path(os.environ.get("APPDATA", "")) / \
+        r"Microsoft\Windows\Start Menu\Programs\Startup"
+    if user_startup.exists():
+        for f in user_startup.iterdir():
+            if f.suffix.lower() in (".lnk", ".bat", ".cmd", ".exe", ".url"):
+                _add(f.stem, str(f), "Startup Folder (User)", enabled=True)
+
+    # 3. All Users Startup folder
+    all_startup = Path(os.environ.get("PROGRAMDATA", "")) / \
+        r"Microsoft\Windows\Start Menu\Programs\StartUp"
+    if all_startup.exists():
+        for f in all_startup.iterdir():
+            if f.suffix.lower() in (".lnk", ".bat", ".cmd", ".exe", ".url"):
+                _add(f.stem, str(f), "Startup Folder (All Users)", enabled=True)
+
+    # 4. Task Scheduler — catch browser/app background tasks
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["schtasks", "/query", "/fo", "CSV", "/nh"],
+            capture_output=True, text=True, timeout=10
+        )
+        keywords = ["chrome", "edge", "brave", "firefox", "opera",
+                    "update", "autoupdate", "startup", "onedriv",
+                    "skype", "teams", "discord", "zoom", "spotify", "steam"]
+        for line in result.stdout.splitlines():
+            parts = line.strip().strip('"').split('","')
+            if len(parts) >= 3:
+                task_name = parts[0].strip('"')
+                status = parts[2].strip('"') if len(parts) > 2 else ""
+                if any(k in task_name.lower() for k in keywords):
+                    enabled = status.lower() in ("ready", "running")
+                    _add(task_name, f"Task Scheduler: {task_name}", "Task Scheduler", enabled)
+    except Exception:
+        pass
+
     return startup_apps
+
+
+
+def get_network_usage() -> list:
+    """Identify top processes consuming network bandwidth."""
+    import psutil
+    net_procs = []
+    try:
+        # Get all connections
+        connections = psutil.net_connections(kind='inet')
+        pid_to_conns = {}
+        for conn in connections:
+            if conn.pid:
+                pid_to_conns.setdefault(conn.pid, []).append(conn)
+        
+        # We can't get per-process bandwidth easily without a capture driver,
+        # but we can count active connections and identify high-bandwidth types.
+        for pid, conns in pid_to_conns.items():
+            try:
+                p = psutil.Process(pid)
+                name = p.name()
+                if name.lower() in ("system", "idle"): continue
+                
+                # Check connection status
+                established = len([c for c in conns if c.status == 'ESTABLISHED'])
+                if established > 0:
+                    net_procs.append({
+                        "pid": pid,
+                        "name": name,
+                        "connections": established,
+                        "type": "High Traffic" if established > 10 else "Active",
+                        "path": p.exe() if hasattr(p, 'exe') else ""
+                    })
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception as e:
+        logger.error(f"Error getting network usage: {e}")
+        
+    net_procs.sort(key=lambda x: x["connections"], reverse=True)
+    return net_procs[:10]
+
+
+def boost_internet() -> tuple:
+    """Perform network optimization actions. Returns (success, log)."""
+    import subprocess
+    log = []
+    success = True
+    
+    commands = [
+        ("Flushing DNS Cache", ["ipconfig", "/flushdns"]),
+        ("Resetting Winsock Catalog", ["netsh", "winsock", "reset"]),
+        ("Resetting IP Stack", ["netsh", "int", "ip", "reset"]),
+        ("Clearing ARP Cache", ["netsh", "interface", "ip", "delete", "arpcache"]),
+    ]
+    
+    for label, cmd in commands:
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if res.returncode == 0:
+                log.append(f"✅ {label}: Success")
+            else:
+                log.append(f"⚠️ {label}: {res.stderr.strip() or 'Partial success'}")
+        except Exception as e:
+            log.append(f"❌ {label}: Failed ({str(e)})")
+            success = False
+            
+    return success, "\n".join(log)
 
 
 def get_disk_usage_breakdown() -> dict:

@@ -153,6 +153,8 @@ class CleanupEngine:
         # ── RISKY (requires explicit user confirmation) ───────────
         clean_history:         bool = False,
         clean_cookies:         bool = False,
+        # ── NEW: PERFORMANCE OPTIMIZATION (Non-destructive) ────────
+        clean_db_vacuum:       bool = True,
     ) -> CleanupResult:
         """Run cleanup with selected options. Returns CleanupResult."""
         self._result = CleanupResult()
@@ -160,6 +162,7 @@ class CleanupEngine:
 
         # Safe tasks
         if clean_temp:           tasks.append(("🗑️ Windows Temp Files",        self._clean_temp_dirs))
+        if clean_db_vacuum:      tasks.append(("🗜️ Optimizing Browser DBs",     self._vacuum_browser_dbs))
         if clean_thumbnails:     tasks.append(("🖼️ Thumbnail Cache",            self._clean_thumbnail_cache))
         if clean_gpu_cache:      tasks.append(("🎮 GPU Shader Cache",           self._clean_gpu_cache))
         if clean_browser_cache:  tasks.append(("🌐 Browser Cache",              self._clean_browser_cache))
@@ -230,6 +233,35 @@ class CleanupEngine:
                         self._clean_firefox_cache(p)
                     else:
                         self._wipe_dir_contents(p)
+
+    def _vacuum_browser_dbs(self):
+        """Vacuum SQLite databases for Chrome, Edge, and Brave.
+        This recovers space and improves performance without deleting data.
+        """
+        import sqlite3
+        targets = {
+            "Chrome": Path(LOCALAPPDATA) / "Google" / "Chrome" / "User Data" / "Default",
+            "Edge": Path(LOCALAPPDATA) / "Microsoft" / "Edge" / "User Data" / "Default",
+            "Brave": Path(LOCALAPPDATA) / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default",
+        }
+        db_names = ["History", "Web Data", "Favicons", "Login Data", "Top Sites"]
+
+        for browser, base_path in targets.items():
+            if not base_path.exists(): continue
+            for db_name in db_names:
+                db_path = base_path / db_name
+                if db_path.exists():
+                    try:
+                        # Copy to temp to vacuum if browser is open (simple attempt)
+                        conn = sqlite3.connect(str(db_path))
+                        conn.execute("VACUUM")
+                        conn.close()
+                        self._result.log.append(f"Vacuumed {browser} {db_name}")
+                    except sqlite3.OperationalError:
+                        # Browser likely open
+                        self._result.log.append(f"Skipped {browser} {db_name} (Database locked)")
+                    except Exception as e:
+                        logger.debug(f"Vacuum error {db_name}: {e}")
 
     def _clean_firefox_cache(self, profiles_dir: Path):
         for profile in profiles_dir.iterdir():
@@ -520,6 +552,7 @@ if _HAS_QT:
                 'clean_clipboard','clean_recent_links','trim_ram',
                 'clean_prefetch','clean_recycle','clean_event_logs',
                 'clean_windows_update','clean_history','clean_cookies',
+                'clean_db_vacuum',
             }
             filtered = {k: v for k, v in self.options.items() if k in known}
             result = engine.run(**filtered)
