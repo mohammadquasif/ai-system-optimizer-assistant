@@ -246,16 +246,17 @@ class AIThinkingWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(24)
-        self._dots = 0
+        self.setFixedHeight(12)
+        self.setMinimumWidth(200)
+        self._offset = 0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._visible = False
 
     def start(self):
         self._visible = True
-        self._dots = 0
-        self._timer.start(400)
+        self._offset = 0
+        self._timer.start(30)
         self.show()
 
     def stop(self):
@@ -264,7 +265,7 @@ class AIThinkingWidget(QWidget):
         self.hide()
 
     def _tick(self):
-        self._dots = (self._dots + 1) % 4
+        self._offset = (self._offset + 5) % (self.width() + 100)
         self.update()
 
     def paintEvent(self, event):
@@ -272,14 +273,28 @@ class AIThinkingWidget(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        colors = ["#00D4FF", "#7C3AED", "#00FF88"]
-        for i in range(3):
-            active = i < self._dots
-            c = QColor(colors[i] if active else "#1E2D45")
-            painter.setBrush(QBrush(c))
-            painter.setPen(Qt.PenStyle.NoPen)
-            x = 8 + i * 18
-            painter.drawEllipse(x, 6, 10, 10)
+        
+        # Background track
+        bg_rect = QRectF(0, 0, self.width(), self.height())
+        painter.setBrush(QBrush(QColor("#1E2D45")))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(bg_rect, 6, 6)
+        
+        # Moving neon chunk
+        chunk_width = 80
+        x = self._offset - chunk_width
+        chunk_rect = QRectF(x, 0, chunk_width, self.height())
+        
+        # Clip to widget bounds
+        painter.setClipRect(self.rect())
+        
+        grad = QLinearGradient(x, 0, x + chunk_width, 0)
+        grad.setColorAt(0, QColor("#7C3AED00"))
+        grad.setColorAt(0.5, QColor("#7C3AED"))
+        grad.setColorAt(1, QColor("#7C3AED00"))
+        
+        painter.setBrush(QBrush(grad))
+        painter.drawRoundedRect(chunk_rect, 6, 6)
         painter.end()
 
 

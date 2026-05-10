@@ -163,12 +163,23 @@ class PerformancePage(QWidget):
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        # Scroll Area to handle smaller screens
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+        
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
 
         title = QLabel("⚡ Performance Monitor")
         title.setStyleSheet("color: #E8F4FD; font-size: 22px; font-weight: 700; font-family: 'Segoe UI';")
-        root.addWidget(title)
+        layout.addWidget(title)
 
         charts_row = QHBoxLayout()
         charts_row.setSpacing(16)
@@ -195,7 +206,7 @@ class PerformancePage(QWidget):
 
         charts_row.addWidget(cpu_card, 1)
         charts_row.addWidget(ram_card, 1)
-        root.addLayout(charts_row)
+        layout.addLayout(charts_row)
 
         # Internet speed card
         speed_card = GlassCard(accent_color="#00D4FF")
@@ -213,7 +224,7 @@ class PerformancePage(QWidget):
         self._speed_result.setStyleSheet("color: #8BA3C7; font-size: 12px; font-family: 'Segoe UI';")
         self._speed_result.setWordWrap(True)
         speed_l.addWidget(self._speed_result)
-        root.addWidget(speed_card)
+        layout.addWidget(speed_card)
 
         # Disk breakdown
         disk_card = GlassCard(accent_color="#00FF88")
@@ -223,7 +234,7 @@ class PerformancePage(QWidget):
         self._disk_container = QVBoxLayout()
         self._disk_container.setSpacing(8)
         disk_l.addLayout(self._disk_container)
-        root.addWidget(disk_card)
+        layout.addWidget(disk_card)
 
         # AI Tips card
         tips_card = GlassCard(accent_color="#7C3AED")
@@ -240,8 +251,11 @@ class PerformancePage(QWidget):
         self._tips_container = QVBoxLayout()
         self._tips_container.setSpacing(6)
         tips_l.addLayout(self._tips_container)
-        root.addWidget(tips_card)
-        root.addStretch()
+        layout.addWidget(tips_card)
+        
+        layout.addStretch()
+        scroll.setWidget(container)
+        root.addWidget(scroll)
         self._refresh()
         QTimer.singleShot(500, self._load_tips)  # Load tips on startup
 
@@ -419,8 +433,18 @@ class StartupAppsPage(QWidget):
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+        
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
 
         hdr = QHBoxLayout()
         title = QLabel("🚀 Startup Apps")
@@ -431,7 +455,7 @@ class StartupAppsPage(QWidget):
         hdr.addWidget(title)
         hdr.addStretch()
         hdr.addWidget(refresh_btn)
-        root.addLayout(hdr)
+        layout.addLayout(hdr)
 
         info = QLabel(
             "Apps marked 🔴 Remove slow down your boot. "
@@ -439,7 +463,7 @@ class StartupAppsPage(QWidget):
         )
         info.setStyleSheet("color: #8BA3C7; font-size: 12px; font-family: 'Segoe UI';")
         info.setWordWrap(True)
-        root.addWidget(info)
+        layout.addWidget(info)
 
         # Summary bar
         self._summary_lbl = QLabel("")
@@ -448,7 +472,7 @@ class StartupAppsPage(QWidget):
             "background: #FFB80010; border: 1px solid #FFB80030; border-radius: 6px; padding: 6px 12px;"
         )
         self._summary_lbl.setWordWrap(True)
-        root.addWidget(self._summary_lbl)
+        layout.addWidget(self._summary_lbl)
 
         # AI Analyze Button
         btn_row = QHBoxLayout()
@@ -457,7 +481,7 @@ class StartupAppsPage(QWidget):
         self._ai_btn.clicked.connect(self._reanalyze_with_ai)
         btn_row.addStretch()
         btn_row.addWidget(self._ai_btn)
-        root.addLayout(btn_row)
+        layout.addLayout(btn_row)
 
         card = GlassCard(accent_color="#FF6B00")
         cl = QVBoxLayout(card)
@@ -494,12 +518,15 @@ class StartupAppsPage(QWidget):
             QTableWidget::item:selected { background: #1E2D45; }
         """)
         cl.addWidget(self._table)
-        root.addWidget(card, 1)
+        layout.addWidget(card, 1)
 
         # Status message
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet("color: #00FF88; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
-        root.addWidget(self._status_lbl)
+        layout.addWidget(self._status_lbl)
+
+        scroll.setWidget(container)
+        root.addWidget(scroll)
 
     def _load_apps(self):
         self._status_lbl.setText("⏳ Loading startup apps...")

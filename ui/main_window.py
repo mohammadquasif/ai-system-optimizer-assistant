@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
 
         # App icon
         import os
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.png")
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             try:

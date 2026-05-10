@@ -319,7 +319,6 @@ class VoiceCommandHandler:
         local_commands = [
             (["clean", "cleanup", "optimize", "speed up"], None),
             (["browser", "chrome", "edge", "firefox"], None),
-            (["status", "health", "how is my system", "how is my pc"], None),
             (["help", "commands", "what can you"], None),
             (["minimize", "hide", "close", "exit"], None),
         ]
