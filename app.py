@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication, QSplashScreen, QMessageBox
 from PyQt6.QtCore import Qt, QTimer, QObject, QEvent
-from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor, QLinearGradient, QBrush, QPen
+from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor, QLinearGradient, QBrush, QPen, QIcon
 
 from config.settings import get_setting, set_setting, init_db, logger as app_logger
 from ai.ollama_manager import OllamaManager, SystemProfile
@@ -149,32 +149,33 @@ def main():
     splash.show()
     app.processEvents()
 
-    # ── Smart pre-check: skip setup if Ollama + model already ready ──
-    from ai.ollama_manager import OllamaManager, PREFERRED_MODELS
+    from ai.ollama_manager import OllamaManager, TARGET_MODEL
     from config.settings import get_setting, set_setting
 
     first_run       = get_setting("first_run", "true") == "true"
     ollama_ready    = OllamaManager.is_api_running()
     installed_models = OllamaManager.list_installed_models() if ollama_ready else []
 
-    # Check if any preferred model is already installed
-    preferred_installed = None
-    for pref in PREFERRED_MODELS:
-        for inst in installed_models:
-            if inst.startswith(pref.split(":")[0]) or inst == pref:
-                preferred_installed = inst
-                break
-        if preferred_installed:
-            break
+    # Check ONLY for 0.5b variant — never accept larger models as "ready"
+    target_installed = any(
+        m.startswith("qwen2.5:0.5") or m == TARGET_MODEL for m in installed_models
+    ) if ollama_ready else False
 
-    run_setup = first_run and not (ollama_ready and preferred_installed)
+    run_setup = first_run and not (ollama_ready and target_installed)
 
-    # If Ollama+model already ready, auto-configure settings without showing dialog
-    if ollama_ready and preferred_installed:
+    # If Ollama + 0.5b ready → silently configure and skip setup dialog
+    if ollama_ready and target_installed:
         set_setting("ai_provider", "ollama")
-        set_setting("ollama_model", preferred_installed)
+        set_setting("ollama_model", TARGET_MODEL)   # ALWAYS 0.5b, never 1.5b
         set_setting("first_run", "false")
-        app_logger.info(f"Fast path: using model {preferred_installed}")
+        app_logger.info(f"Fast path: 0.5b ready, configuring as {TARGET_MODEL}")
+    elif ollama_ready and installed_models:
+        # Ollama running but only has a larger model — still skip setup,
+        # _ensure_ollama will pull 0.5b silently in background
+        set_setting("ai_provider", "ollama")
+        set_setting("ollama_model", TARGET_MODEL)
+        set_setting("first_run", "false")
+        app_logger.info(f"Fast path: Ollama running, will pull {TARGET_MODEL} in background")
 
     if run_setup:
         splash.finish(None)
