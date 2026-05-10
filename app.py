@@ -38,7 +38,7 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication, QSplashScreen, QMessageBox
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QObject, QEvent
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor, QLinearGradient, QBrush, QPen
 
 from config.settings import get_setting, set_setting, init_db, logger as app_logger
@@ -176,16 +176,25 @@ def main():
     window.show()
 
     # ── Voice greeting ───────────────────────────────────────────
+    # Read name from settings first (user may have changed it), fall back to system name
+    from ui.main_window import _get_system_username
+    saved_name = get_setting("user_name", "").strip()
+    greeting_name = saved_name if saved_name else _get_system_username()
+    # Also save it so voice tab shows it
+    if not saved_name:
+        set_setting("user_name", greeting_name)
+
+    window._user_name = greeting_name  # keep in sync
+
     if get_setting("voice_enabled", "true") == "true":
         from services.voice_service import VoiceAssistant
         voice = VoiceAssistant()
         voice.start()
-        name = get_setting("user_name", "Quasif")
-        QTimer.singleShot(2500, lambda: voice.greet(name))
+        QTimer.singleShot(2500, lambda: voice.greet(greeting_name))
         window._voice = voice
 
-    # ── Idle Watcher — auto-close after 5 min of inactivity ─────
-    idle_minutes   = int(get_setting("idle_close_minutes", "5"))
+    # ── Idle Watcher — auto-close after 10 min of inactivity ─────
+    idle_minutes = int(get_setting("idle_close_minutes", "10"))
     from services.idle_watcher import IdleWatcher
 
     idle_watcher = IdleWatcher(
@@ -198,23 +207,45 @@ def main():
         close_cb = lambda: QTimer.singleShot(0, _do_idle_close),
     )
     idle_watcher.start()
-    window._idle_watcher = idle_watcher  # keep reference
+    window._idle_watcher = idle_watcher
 
-    # Cancel countdown on any window interaction
-    window.mousePressEvent   = lambda e: (idle_watcher.reset(), _clear_countdown(window))
-    window.keyPressEvent     = lambda e: (idle_watcher.reset(), _clear_countdown(window))
-    window.wheelEvent        = lambda e: idle_watcher.reset()
+    # ── Event filter: reset idle timer on ANY user interaction ───
+    # (mousePressEvent override only catches the main window, not child widgets)
+    class _IdleResetFilter(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() in (
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.KeyPress,
+                QEvent.Type.Wheel,
+                QEvent.Type.TouchBegin,
+            ):
+                idle_watcher.reset()
+                _clear_countdown(window)
+            return False  # don't consume the event
+
+    _idle_filter = _IdleResetFilter(app)
+    app.installEventFilter(_idle_filter)
+    window._idle_filter = _idle_filter  # keep reference
 
     def _do_idle_close():
         """Save state and quit cleanly, freeing all RAM."""
+        # Don't close if cleanup is actively running
+        try:
+            if window._pages["cleanup"]._is_running:
+                idle_watcher.reset()
+                return
+        except Exception:
+            pass
         app_logger.info("IdleWatcher: clean shutdown initiated.")
         if get_setting("voice_enabled", "true") == "true":
             try:
-                window._voice.speak("Closing now to free your memory. I will be back when you need me.")
+                window._voice.speak(
+                    f"Closing now to free your memory, {greeting_name}. "
+                    "I will be back when you need me."
+                )
             except Exception:
                 pass
-        # Small delay for voice to finish
-        QTimer.singleShot(2000, lambda: (
+        QTimer.singleShot(2500, lambda: (
             set_setting("last_close_reason", "idle"),
             app.quit()
         ))

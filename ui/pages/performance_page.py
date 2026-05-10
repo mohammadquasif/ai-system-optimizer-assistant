@@ -10,12 +10,29 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QPushButton, QScrollArea, QFrame, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, pyqtSlot
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QBrush
 from ui.widgets import GlassCard, NeonButton, NeonProgressBar, SparklineChart
 from monitoring.system_monitor import get_startup_apps, get_disk_usage_breakdown
 import psutil
 import threading
+
+
+# ─────────────────────────────────────────────────────────────────
+# Generic Worker Thread (prevents QTimer.singleShot from non-Qt threads)
+# ─────────────────────────────────────────────────────────────────
+
+class _FetchWorker(QThread):
+    """Runs a callable in a QThread and emits result on main thread via signal."""
+    result_ready = pyqtSignal(object)
+
+    def __init__(self, fn):
+        super().__init__()
+        self._fn = fn
+
+    def run(self):
+        result = self._fn()
+        self.result_ready.emit(result)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -86,6 +103,7 @@ class PerformancePage(QWidget):
         super().__init__(parent)
         self._cpu_chart = None
         self._ram_chart = None
+        self._speed_worker = None  # prevent GC
         self._setup_ui()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh)
@@ -198,40 +216,30 @@ class PerformancePage(QWidget):
 
     def _run_speed_test(self):
         self._speed_btn.setEnabled(False)
-        self._speed_result.setText("⏳ Testing internet speed... (this may take 10-30 seconds)")
+        self._speed_result.setText("⏳ Testing internet speed... (10-30 seconds)")
         self._speed_result.setStyleSheet("color: #FFB800; font-size: 12px; font-family: 'Segoe UI';")
 
         def _test():
             try:
-                import urllib.request, time, struct, socket
-                # Download test: fetch a known-size file
-                url = "http://speedtest.ftp.otenet.gr/files/test10Mb.db"
+                import urllib.request, time
+                url = "http://ipv4.download.thinkbroadband.com/1MB.zip"
                 start = time.time()
-                try:
-                    req = urllib.request.urlopen(url, timeout=20)
-                    data = req.read()
-                    elapsed = time.time() - start
-                    size_mb = len(data) / 1e6
-                    dl_mbps = (size_mb * 8) / elapsed
-                except Exception:
-                    # Fallback: time a 1MB fetch
-                    url2 = "http://ipv4.download.thinkbroadband.com/1MB.zip"
-                    start = time.time()
-                    req = urllib.request.urlopen(url2, timeout=20)
-                    data = req.read()
-                    elapsed = time.time() - start
-                    size_mb = len(data) / 1e6
-                    dl_mbps = (size_mb * 8) / elapsed
-
-                # Ping test
+                req = urllib.request.urlopen(url, timeout=25)
+                data = req.read()
+                elapsed = max(time.time() - start, 0.001)
+                dl_mbps = (len(data) / 1e6 * 8) / elapsed
                 ping_ms = self._ping_test()
-                result = f"📥 Download: {dl_mbps:.1f} Mbps   🏓 Ping: {ping_ms} ms"
-                QTimer.singleShot(0, lambda r=result: self._show_speed(r, True))
+                return f"📥 Download: {dl_mbps:.1f} Mbps   🏓 Ping: {ping_ms} ms", True
             except Exception as e:
-                msg = f"Speed test failed: {e}"
-                QTimer.singleShot(0, lambda m=msg: self._show_speed(m, False))
+                return f"Speed test failed: {e}", False
 
-        threading.Thread(target=_test, daemon=True).start()
+        def _on_result(r):
+            text, ok = r
+            self._show_speed(text, ok)
+
+        self._speed_worker = _FetchWorker(_test)
+        self._speed_worker.result_ready.connect(_on_result)
+        self._speed_worker.start()
 
     def _ping_test(self) -> str:
         try:
@@ -272,6 +280,8 @@ class StartupAppsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._apps = []
+        self._fetch_worker = None  # prevent GC
+        self._disable_workers = []  # prevent GC
         self._setup_ui()
         QTimer.singleShot(300, self._load_apps)
 
@@ -350,12 +360,10 @@ class StartupAppsPage(QWidget):
     def _load_apps(self):
         self._status_lbl.setText("⏳ Loading startup apps...")
         self._table.setRowCount(0)
-
-        def _fetch():
-            apps = get_startup_apps()
-            QTimer.singleShot(0, lambda a=apps: self._populate(a))
-
-        threading.Thread(target=_fetch, daemon=True).start()
+        # Use QThread so result signal delivers on main thread
+        self._fetch_worker = _FetchWorker(get_startup_apps)
+        self._fetch_worker.result_ready.connect(self._populate)
+        self._fetch_worker.start()
 
     def _populate(self, apps: list):
         self._apps = apps
@@ -442,24 +450,27 @@ class StartupAppsPage(QWidget):
     def _disable_app(self, app_name: str, row: int):
         """Disable startup entry for this app."""
         def _do():
-            success = _disable_startup_app(app_name)
-            def _update(s=success):
-                if s:
-                    self._status_lbl.setText(f"✅ Disabled: {app_name}. Restart to take effect.")
-                    self._status_lbl.setStyleSheet("color: #00FF88; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
-                    # Gray out the row
-                    for col in range(self._table.columnCount()):
-                        item = self._table.item(row, col)
-                        if item:
-                            item.setForeground(QBrush(QColor("#4A6080")))
-                    w = self._table.cellWidget(row, 4)
-                    if w:
-                        btn = w.findChild(QPushButton)
-                        if btn:
-                            btn.setEnabled(False)
-                            btn.setText("Disabled")
-                else:
-                    self._status_lbl.setText(f"⚠️ Could not disable {app_name} — may need admin rights.")
-                    self._status_lbl.setStyleSheet("color: #FFB800; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
-            QTimer.singleShot(0, _update)
-        threading.Thread(target=_do, daemon=True).start()
+            return _disable_startup_app(app_name)
+
+        def _update(success):
+            if success:
+                self._status_lbl.setText(f"✅ Disabled: {app_name}. Restart to take effect.")
+                self._status_lbl.setStyleSheet("color: #00FF88; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
+                for col in range(self._table.columnCount()):
+                    item = self._table.item(row, col)
+                    if item:
+                        item.setForeground(QBrush(QColor("#4A6080")))
+                w = self._table.cellWidget(row, 4)
+                if w:
+                    btn = w.findChild(QPushButton)
+                    if btn:
+                        btn.setEnabled(False)
+                        btn.setText("Disabled")
+            else:
+                self._status_lbl.setText(f"⚠️ Could not disable {app_name} — may need admin rights.")
+                self._status_lbl.setStyleSheet("color: #FFB800; font-size: 11px; font-family: 'Segoe UI'; padding: 4px;")
+
+        worker = _FetchWorker(_do)
+        worker.result_ready.connect(_update)
+        worker.start()
+        self._disable_workers.append(worker)  # prevent GC

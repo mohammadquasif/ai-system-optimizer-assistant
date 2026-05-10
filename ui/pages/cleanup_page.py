@@ -22,6 +22,7 @@ class CleanupPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._is_running = False
+        self._bg_thread = None  # keep reference to prevent GC
         self._setup_ui()
         self._estimate_space()
 
@@ -246,8 +247,8 @@ class CleanupPage(QWidget):
             except Exception:
                 pass
 
-        bg = BackgroundCleanup(options, progress_cb=progress_cb, done_cb=done_cb)
-        bg.start()
+        self._bg_thread = BackgroundCleanup(options, progress_cb=progress_cb, done_cb=done_cb)
+        self._bg_thread.start()
 
     def _log(self, msg: str):
         self._log_text.append(msg)
