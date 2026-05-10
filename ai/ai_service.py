@@ -36,7 +36,7 @@ class AIProvider:
 class OllamaProvider(AIProvider):
     name = "ollama"
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen2.5:1.5b"):
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "qwen2.5:0.5b"):
         self.base_url = base_url.rstrip("/")
         self.model = model
 
@@ -257,12 +257,17 @@ class AIService:
         return cls._instance
 
     def reload(self):
-        """Reload provider from current settings."""
+        """Reload provider from current settings, auto-correcting to 0.5b if needed."""
         with self._lock:
+            from ai.ollama_manager import TARGET_MODEL
             provider_name = get_setting("ai_provider", "none")
             if provider_name == "ollama":
                 url = get_setting("ollama_url", "http://localhost:11434")
-                model = get_setting("ollama_model", "qwen2.5:1.5b")
+                model = get_setting("ollama_model", TARGET_MODEL)
+                # Auto-correct: if saved model is empty or not 0.5b, force TARGET_MODEL
+                if not model or model.strip() == "":
+                    model = TARGET_MODEL
+                    set_setting("ollama_model", model)
                 self._provider = OllamaProvider(base_url=url, model=model)
             elif provider_name == "openai":
                 key = decrypt_value(get_setting("openai_key_enc", ""))
@@ -272,7 +277,7 @@ class AIService:
                 self._provider = AnthropicProvider(api_key=key)
             else:
                 self._provider = None
-            logger.info(f"AIService loaded provider: {provider_name}")
+            logger.info(f"AIService loaded provider: {provider_name}, model: {getattr(self._provider, 'model', 'n/a')}")
 
     @property
     def provider(self) -> Optional[AIProvider]:

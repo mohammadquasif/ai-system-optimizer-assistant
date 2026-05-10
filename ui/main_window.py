@@ -366,9 +366,12 @@ class MainWindow(QMainWindow):
         self._ai_timer.timeout.connect(self._refresh_ai_status)
         self._ai_timer.start(5000)  # every 5s initially
 
-        # Voice greeting
+        # Voice recognition callback — route through AI Chat page
         if get_setting("voice_enabled", "true") == "true":
             self._voice.start()
+            self._voice.start_listening(
+                lambda text: QTimer.singleShot(0, lambda t=text: self._pages["ai_chat"].send_message_external(t))
+            )
             QTimer.singleShot(2000, lambda: self._voice.greet(self._user_name))
 
         # Setup voice command handler with full navigation + action wiring

@@ -450,6 +450,15 @@ class StartupAppsPage(QWidget):
         self._summary_lbl.setWordWrap(True)
         root.addWidget(self._summary_lbl)
 
+        # AI Analyze Button
+        btn_row = QHBoxLayout()
+        self._ai_btn = NeonButton("🤖 Re-analyze with AI", "#7C3AED")
+        self._ai_btn.setFixedWidth(180)
+        self._ai_btn.clicked.connect(self._reanalyze_with_ai)
+        btn_row.addStretch()
+        btn_row.addWidget(self._ai_btn)
+        root.addLayout(btn_row)
+
         card = GlassCard(accent_color="#FF6B00")
         cl = QVBoxLayout(card)
         cl.setContentsMargins(16, 14, 16, 14)
@@ -586,6 +595,75 @@ class StartupAppsPage(QWidget):
         self._summary_lbl.setText(summary)
         self._status_lbl.setText(f"✅ Loaded {len(apps)} startup apps")
 
+    def _reanalyze_with_ai(self):
+        """Use Ollama to identify unknown startup apps."""
+        unknown_apps = []
+        for i, app in enumerate(self._apps):
+            name = app.get("name", "")
+            rec_info = _get_recommendation(name)
+            if rec_info["rec"] == "unknown":
+                unknown_apps.append((i, name))
+        
+        if not unknown_apps:
+            self._status_lbl.setText("✅ No unknown apps found. All apps identified!")
+            return
+
+        self._status_lbl.setText(f"🧠 AI is identifying {len(unknown_apps)} apps...")
+        self._ai_btn.setEnabled(False)
+
+        def _ai_task():
+            from ai.ai_service import AIService
+            service = AIService.get_instance()
+            if not service.is_configured:
+                return "AI Not Configured"
+            
+            names = [name for i, name in unknown_apps]
+            prompt = (
+                f"I have these unknown Windows startup apps: {', '.join(names)}. "
+                "Briefly explain what each one likely is in 1 sentence. "
+                "Format as 'AppName: Explanation'. One per line."
+            )
+            try:
+                return service.chat(prompt)
+            except Exception as e:
+                return str(e)
+
+        def _ai_done(result):
+            self._ai_btn.setEnabled(True)
+            if "Error" in result or "Configured" in result:
+                self._status_lbl.setText(f"⚠️ AI error: {result}")
+                return
+
+            # Parse results
+            lines = result.strip().split("\n")
+            count = 0
+            for line in lines:
+                if ":" in line:
+                    parts = line.split(":", 1)
+                    app_name_guess = parts[0].strip().lower()
+                    explanation = parts[1].strip()
+                    
+                    # Match back to row
+                    for row_idx, real_name in unknown_apps:
+                        if app_name_guess in real_name.lower() or real_name.lower() in app_name_guess:
+                            # Update Col 2 (Purpose)
+                            item = QTableWidgetItem(f"🤖 {explanation}")
+                            item.setForeground(QBrush(QColor("#00D4FF")))
+                            item.setToolTip(f"AI Guess: {explanation}")
+                            self._table.setItem(row_idx, 2, item)
+                            # Update Col 4 (Status)
+                            status_item = QTableWidgetItem("🔍 AI Suggest")
+                            status_item.setForeground(QBrush(QColor("#00D4FF")))
+                            self._table.setItem(row_idx, 4, status_item)
+                            count += 1
+            
+            self._status_lbl.setText(f"✨ AI successfully identified {count} apps!")
+
+        worker = _FetchWorker(_ai_task)
+        worker.result_ready.connect(_ai_done)
+        worker.start()
+        self._disable_workers.append(worker)
+
     def _disable_app(self, app_name: str, row: int):
         """Disable startup entry for this app."""
         def _do():
@@ -658,5 +736,15 @@ def generate_ai_tips() -> list:
     except Exception:
         pass
 
+    # Check for SSD vs HDD
+    try:
+        import subprocess
+        ps = subprocess.check_output('powershell -NoProfile -Command "Get-PhysicalDisk | Select-Object MediaType"', shell=True).decode()
+        if "HDD" in ps:
+            tips.append(("💡 Hardware Tip", "You have an HDD detected. Disabling all non-essential startup apps is CRITICAL for your performance.", "#FFB800"))
+    except Exception:
+        pass
+
     tips.append(("💡 Best Practice", "Run a system cleanup weekly to keep your PC running at peak speed.", "#7C3AED"))
+    tips.append(("💡 Power Tip", "Check 'Power & Sleep settings' — Ensure 'High Performance' mode is active for best speed.", "#00D4FF"))
     return tips
