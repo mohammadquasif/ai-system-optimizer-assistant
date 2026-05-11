@@ -15,7 +15,9 @@ psutil>=5.9.8
 # Voice Assistant
 pyttsx3>=2.90
 SpeechRecognition>=3.10.1
-PyAudio>=0.2.14
+# PyAudio requires MSVC build tools on Windows - installed separately by INSTALL.bat
+# Manual install: pip install PyAudio  (needs Microsoft C++ Build Tools)
+# Fallback: pip install pipwin && pipwin install pyaudio
 
 # HTTP Requests
 requests>=2.31.0
