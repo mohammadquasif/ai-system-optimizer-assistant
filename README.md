@@ -1,4 +1,4 @@
-# ⚡ AI System Optimizer Assistant — #aiero #optimize
+# ⚡ Awadhi AI System Optimizer Assistant — #aiero #optimize
 
 <div align="center">
 
