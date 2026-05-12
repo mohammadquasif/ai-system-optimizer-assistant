@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![AI System Optimizer](https://img.shields.io/badge/AI%20System%20Optimizer-v1.1.0-00D4FF?style=for-the-badge&logo=windows&logoColor=white)
+![Awadhi AI System Optimizer](https://img.shields.io/badge/AI%20System%20Optimizer-v1.1.0-00D4FF?style=for-the-badge&logo=windows&logoColor=white)
 ![Keywords](https://img.shields.io/badge/Keywords-aiero_optimize-00FF88?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Ollama](https://img.shields.io/badge/Ollama-0.5b%20Lock-black?style=for-the-badge)
@@ -20,7 +20,7 @@
 
 ## 🧠 What Is This?
 
-The **AI System Optimizer Assistant** is a free, privacy-first desktop app that:
+The **Awadhi AI System Optimizer Assistant** is a free, privacy-first desktop app that:
 
 - 🤖 **Installs Ollama automatically** — no manual setup needed.
 - 🧹 **Cleans your PC safely** — 12+ cleanup tasks, never touches personal files.
